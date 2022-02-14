@@ -1,0 +1,499 @@
+select
+--dt.year_nr,
+dt.week_nr
+,min(dt.DW_EFF_DT) as week_strt
+,max(dt.DW_EFF_DT) as week_end
+from PROD_CORE.DATA.D_DATE dt
+-- sundays to saturdays
+where 1=1
+and ((datediff(day,dt.DW_EFF_DT,'2022-02-05')) < 84)
+and dt.DW_EFF_DT <= '2022-02-05'
+group by 1
+order by 1 desc
+;
+
+
+		with entry as (
+
+				select 
+						f1.device_id
+						,f1.navigation_id
+						,f1.dw_eff_dt
+						--
+						,max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm = 'mortgages_calculator_form' 
+											-- f1.page_id = '1b89c18d2cb1730e26deb4b2efe7eec9e2398e88'
+											-- f1.taxo.primary_vertical_nm = 'shopping for a mortgage'
+										then 1 else 0 end) as a1_p_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.entity_nm in ('mrt_calculator','mrt_calculator_monthly_payment','mrt_calculator_latest_rates')
+										and f1.form_nm in ('mrt_calculator','mrt_calculator_monthly_payment','mrt_calculator_latest_rates')
+										then 1 else 0 end) as a2_f_imp
+						,max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm in ('mortgages_home_affordability_calculator_form','mortgages_home_affordability_calculator')
+										then 1 else 0 end) as a3_p_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 514469
+										then 1 else 0 end) as a4_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 513195
+										then 1 else 0 end) as a5_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 514345
+										then 1 else 0 end) as a6_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801537
+										then 1 else 0 end) as a7_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm = 'mortgages_preapproval'
+										then 1 else 0 end) as a8_p_imp 
+						,max(case when f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_IS_MOBILE = true then 'mobile'
+									when f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_IS_PC = true then 'pc'
+									when f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_IS_TABLET = true then 'tablet'
+									else 'unknown' end) as dvc_type
+						,max(f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_BROWSER_FAMILY) as dvc_browser
+				from PROD_CORE.DATA.F_ACTIVITY f1
+				where 1=1
+				and ((datediff(day,f1.DW_EFF_DT,'2022-02-05')) < 84)
+				and f1.DW_EFF_DT <= '2022-02-05'
+				and f1.activity_type_cd in ('view_impression','element_impression')
+				group by 1,2,3
+				having (
+							max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm = 'mortgages_calculator_form' 
+										then 1 else 0 end) > 0
+							or
+							max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.entity_nm in ('mrt_calculator','mrt_calculator_monthly_payment','mrt_calculator_latest_rates')
+										and f1.form_nm in ('mrt_calculator','mrt_calculator_monthly_payment','mrt_calculator_latest_rates')
+										then 1 else 0 end) > 0
+							or 
+							max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm in ('mortgages_home_affordability_calculator_form','mortgages_home_affordability_calculator')
+										then 1 else 0 end) > 0
+							or 
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 514469
+										then 1 else 0 end) > 0
+							or 
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 513195
+										then 1 else 0 end) > 0 
+							or 
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 514345
+										then 1 else 0 end) > 0
+							or 
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801537
+										then 1 else 0 end) > 0
+							or 
+							max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm = 'mortgages_preapproval'
+										then 1 else 0 end) > 0
+							) 
+
+						)
+
+
+			select 
+			xx.week
+			,count(distinct xx.device_id) as m1_entry_dvc
+			from (
+					select 
+					dt.month_start_dt as month 
+					,dt.week_nr as week 
+					,entry.device_id
+					,entry.navigation_id
+					,entry.dvc_type
+					,entry.dvc_browser
+					--
+					,(entry.a1_p_imp +
+						entry.a2_f_imp +
+						entry.a3_p_imp +
+						entry.a4_c_imp +
+						entry.a5_c_imp +
+						entry.a6_c_imp +
+						entry.a7_c_imp +
+						entry.a8_p_imp) as any_entry_point_visit
+					from entry 
+					left join PROD_CORE.DATA.D_DATE dt on entry.dw_eff_dt = dt.dw_eff_dt
+					) xx
+			where 1=1
+			and xx.any_entry_point_visit > 0
+			group by 1
+			order by 1 desc
+
+-------------------
+
+		with lfstep as ( 
+
+				select 
+						f1.device_id
+						,f1.navigation_id
+						,f1.dw_eff_dt
+						--
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_intro'
+										and f1.section_nm = 'zipcode'
+										then 1 else 0 end) as z0_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'propertyType'
+										then 1 else 0 end) as z1_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'propertyPurpose'
+										then 1 else 0 end) as z2_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'homeBuyingStage'
+										then 1 else 0 end) as z3_f_imp
+						/* as part of HLM optimizations this step was removed 11/24
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'financialBreak'
+										then 1 else 0 end) as z4_f_imp
+								*/
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'purchasePrice'
+										then 1 else 0 end) as z5_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'downPayment'
+										then 1 else 0 end) as z6_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'creditScore'
+										then 1 else 0 end) as z7_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'employmentType'
+										then 1 else 0 end) as z8_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'annualIncome'
+										then 1 else 0 end) as z9_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'militaryQuestion'
+										then 1 else 0 end) as z10_f_imp
+						/* as part of HLM optimizations this step was removed 11/24
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'personalBreak'
+										then 1 else 0 end) as z11_f_imp
+						*/
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'name'
+										then 1 else 0 end) as z12_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'emailAddress'
+										then 1 else 0 end) as z13_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'phoneNumber'
+										then 1 else 0 end) as z14_f_imp
+						,max(case when f1.activity_type_cd = 'form'
+										and f1.activity_nm = 'form_submitted'
+										and f1.form_nm = 'home_lead_match'
+										then 1 else 0 end) as z15_e_int
+						,max(case when f1.activity_type_cd = 'form'
+										and f1.activity_nm = 'form_submitted'
+										and f1.form_nm = 'home_lead_match'
+										then f1.activity_ts else null end) as z15_submit_max_ts
+						,max(case when f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_IS_MOBILE = true then 'mobile'
+									when f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_IS_PC = true then 'pc'
+									when f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_IS_TABLET = true then 'tablet'
+									else 'unknown' end) as dvc_type
+						,max(f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_BROWSER_FAMILY) as dvc_browser
+				from PROD_CORE.DATA.F_ACTIVITY f1
+				where 1=1
+				and ((datediff(day,f1.DW_EFF_DT,'2022-02-05')) < 84)
+				and f1.DW_EFF_DT <= '2022-02-05'
+				and f1.activity_type_cd in ('form','element_impression')
+				and f1.form_nm in ('home_lead_match','home_lead_match_intro')
+				group by 1,2,3
+				having (
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_intro'
+										and f1.section_nm = 'zipcode'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'propertyType'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'propertyPurpose'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'homeBuyingStage'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'purchasePrice'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'downPayment'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'creditScore'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'employmentType'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'annualIncome'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'militaryQuestion'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'name'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'emailAddress'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'phoneNumber'
+										then 1 else 0 end) > 0
+						or 
+						max(case when f1.activity_type_cd = 'form'
+										and f1.activity_nm = 'form_submitted'
+										and f1.form_nm = 'home_lead_match'
+										then 1 else 0 end) > 0
+							)
+
+				)
+
+			select 
+			xx.week
+			,count(distinct case when xx.any_lform_step > 0 then xx.device_id else null end) as m3_formOpens_dvc
+			,count(distinct case when xx.lform_complete > 0 then xx.device_id else null end) as m5_formCompletes_dvc
+			from (
+					select 
+					dt.month_start_dt as month 
+					,dt.week_nr as week 
+					,lfstep.*
+					--
+					,(lfstep.z0_f_imp +
+					 	lfstep.z1_f_imp +
+						lfstep.z2_f_imp +
+						lfstep.z3_f_imp +
+						--lfstep.z4_f_imp +
+						lfstep.z5_f_imp +
+						lfstep.z6_f_imp +
+						lfstep.z7_f_imp +
+						lfstep.z8_f_imp +
+						lfstep.z9_f_imp +
+						lfstep.z10_f_imp +
+						--lfstep.z11_f_imp +
+						lfstep.z12_f_imp +
+						lfstep.z13_f_imp +
+						lfstep.z14_f_imp) as any_lform_step
+
+					,(case when lfstep.z1_f_imp > 0
+						and lfstep.z2_f_imp > 0
+						and lfstep.z3_f_imp > 0
+						--and lfstep.z4_f_imp > 0
+						and lfstep.z5_f_imp > 0
+						and lfstep.z6_f_imp > 0
+						and lfstep.z7_f_imp > 0
+						and lfstep.z8_f_imp > 0
+						and lfstep.z10_f_imp > 0
+						--and lfstep.z11_f_imp > 0
+						and lfstep.z12_f_imp > 0
+						and lfstep.z13_f_imp > 0
+						and lfstep.z14_f_imp > 0
+						and lfstep.z15_e_int > 0 then 1 else 0 end) as lform_complete	
+					from lfstep 
+					left join PROD_CORE.DATA.D_DATE dt on lfstep.dw_eff_dt = dt.dw_eff_dt
+					) xx
+			where 1=1
+			group by 1
+			order by 1 desc
+;
+
+----------------------
+----------------------
+-- AS OF 1/19/21, retrospectively restating these #s using new code/logic leveraging PROD_RAW.EVENTS.SHOPPING_FINISHED
+-- details: https://nerdwallet.slack.com/archives/GNZ1PHE6Q/p1642526388064600
+
+
+
+with shop as (
+
+
+	select
+	a.dw_eff_dt
+	,a.device_id
+	,a.marketplace_institution_id
+	,a.institution_nm
+	,a.txn_cn
+	,(case when a.lender_match_ind = false
+	                -- if impression ID cannot be linked and no additional lenders linked either then assume hlm match true even though did not successfully join on impression ID
+	                        and addl_lender_ind is null then true else a.lender_match_ind end) as lender_match_ind
+	,(case when a.lender_match_ind = true then false
+					-- addl lender will only count if traditional lender match is not true. Prevents same lender from double counting as trad lead match as well as add'l lender match
+			when a.addl_lender_ind is not null then true else false end) as addl_lender_ind
+	,a.comm_am
+	,a.txn_w_rev_cn
+	from (
+				select
+				date(r1.event_occurred_at) as dw_eff_dt
+				,r1.device_id
+				--,r1.shopping_finish_id
+				,r1.marketplace_institution_id
+				,(case
+				when r1.marketplace_institution_id = 'c5f427ec-48d1-11e8-9c02-3fd93caf0574' then 'NASB'
+				when r1.marketplace_institution_id = 'c5ef35b6-48d1-11e8-9c02-3ba377fa4488' then 'New American Funding'
+				when r1.marketplace_institution_id = 'c5ec35b4-48d1-11e8-9c02-4b750722af6c' then 'NBKC'
+				when r1.marketplace_institution_id = 'c5ea02ee-48d1-11e8-9c02-9bce45af5314' then 'Rocket Mortgage'
+				when r1.marketplace_institution_id = 'c5edd504-48d1-11e8-9c02-77fe06537299' then 'Quicken Loans'
+				when r1.marketplace_institution_id = 'c5eeea84-48d1-11e8-9c02-0b2e43b9e524' then 'BNC National Bank'
+				when r1.marketplace_institution_id = 'c5ee62da-48d1-11e8-9c02-f3b810b92c01' then 'Better'
+				else 'unmapped' end) as institution_nm
+				--
+				,count(distinct r1.shopping_finish_id) as txn_cn
+				,max(case when m1.section_nm = 'home_lead_match_offer' then true else false end) as lender_match_ind
+				,max(m2.marketplace_institution_id) as addl_lender_ind
+				,max(c1.commission_am) as comm_am
+				,count(distinct case when c1.commission_am > 0 then r1.shopping_finish_id else null end) as txn_w_rev_cn
+
+				from PROD_RAW.EVENTS.SHOPPING_FINISHED r1
+				left join PROD_CORE.DATA.F_ACTIVITY m1
+								on m1.activity_id = r1.PRODUCT_IMPRESSION_ID
+				                and m1.activity_id IS NOT null
+				                and m1.section_nm = 'home_lead_match_offer'
+				                and ((datediff(day,m1.DW_EFF_DT,'2022-02-05')) < 84)
+								and m1.DW_EFF_DT <= '2022-02-05'
+				                and m1.activity_type_cd = 'element_impression'
+				left join PROD_CORE.DATA.F_ACTIVITY m2
+								on m2.MARKETPLACE_INSTITUTION_ID = r1.MARKETPLACE_INSTITUTION_ID
+								and m2.DEVICE_ID = r1.DEVICE_ID
+								and m2.dw_eff_dt = date(r1.event_occurred_at)
+								and m2.entity_nm = 'hlm_additional_lender_card'
+								and ((datediff(day,m2.DW_EFF_DT,'2022-02-05')) < 84)
+								and m2.DW_EFF_DT <= '2022-02-05'
+				                and m2.activity_type_cd = 'element_impression'
+				left join PROD_CORE.DATA.F_ACTIVITY c1
+								on c1.shopping_finish_id = r1.shopping_finish_id
+								and c1.dw_eff_dt = date(r1.event_occurred_at)
+								and ((datediff(day,c1.DW_EFF_DT,'2022-02-05')) < 84)
+								and c1.DW_EFF_DT <= '2022-02-05'
+								and c1.activity_type_cd = 'AFLT_TRAN'
+				where 1=1
+				and ((datediff(day,date(r1.event_occurred_at),'2022-02-05')) < 84)
+				and date(r1.event_occurred_at) <= '2022-02-05'
+				and r1.finish_type in ('lead_inputflow')
+				and substring(r1.SOURCE_URL_SIMPLE,0,64) = 'https://www.nerdwallet.com/mortgages/mortgage-pre-approval/match'
+				and r1.cta_type = 'apply_now_button'
+				group by 1,2,3,4
+				order by 1,2,3,4
+		) a
+)
+
+
+select 
+--dw_eff_dt
+--dt.month_start_dt as month
+dt.week_nr as week 
+--,institution_nm
+,count(distinct device_id) as dvc_cn
+,sum(1) as lender_combo_cn
+,sum(txn_cn) as txn_cn 
+,sum(comm_am) as tot_comm_am
+--,sum(txn_w_rev_cn) as txn_w_rev_cn 
+--,sum(case when comm_am > 0 then 1 else 0 end) as lender_combo_w_rev_cn
+,count(distinct case when comm_am > 0 then device_id else null end) as dvc_w_rev_cn
+
+,sum(case when lender_match_ind = true then 1 else 0 end) as hlm_match_cn 
+,count(distinct case when lender_match_ind = true then device_id else null end) as hlm_match_dvc_cn
+,sum(case when lender_match_ind = true then comm_am else null end) as hlm_match_comm_am
+,count(distinct case when lender_match_ind = true
+					and comm_am > 0 then device_id else null end) as hlm_match_dvc_w_rev_cn
+,count(distinct case when lender_match_ind = true
+					and institution_nm = 'Better' then device_id else null end) as hlm_better_match_dvc_cn
+,sum(case when lender_match_ind = true
+					and institution_nm = 'Better' then comm_am else null end) as hlm_better_match_comm_am
+
+,sum(case when addl_lender_ind = true then 1 else 0 end) as addl_lender_txn_cn 
+,count(distinct case when addl_lender_ind = true then device_id else null end) as addl_lender_dvc_cn
+,sum(case when addl_lender_ind = true then comm_am else null end) as addl_lender_comm_am
+,count(distinct case when addl_lender_ind = true
+					and comm_am > 0 then device_id else null end) as addl_lender_dvc_w_rev_cn
+from shop 
+left join PROD_CORE.DATA.D_DATE dt on shop.dw_eff_dt = dt.dw_eff_dt
+where 1=1 
+group by 1
+order by 1 desc
+;
