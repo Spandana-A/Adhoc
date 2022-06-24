@@ -9,8 +9,17 @@ with entry as (
 				a5_c_imp + 
 				a6_c_imp + 
 				a7_c_imp + 
+				a8_c_imp + 
+				a9_c_imp + 
+				a10_c_imp + 
+				a11_c_imp + 
+				a12_c_imp + 
+				a13_c_imp + 
+				a14_c_imp + 
+				a15_c_imp + 
+				a16_c_imp + 
 				a8_p_imp +
-                a9_p_imp) > 0 then 1 else 0 end) as any_entry
+                		a9_p_imp) > 0 then 1 else 0 end) as any_entry
 			,(b1_e_point_imp + b2_preappr_pv) as entry_tot_imp
 			from (
 				select 
@@ -48,6 +57,42 @@ with entry as (
 										and f1.activity_nm = 'content_impression'
 										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801537
 										then 1 else 0 end) as a7_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 514502
+										then 1 else 0 end) as a8_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801607
+										then 1 else 0 end) as a9_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801599
+										then 1 else 0 end) as a10_c_imp						
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 677249
+										then 1 else 0 end) as a11_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801591
+										then 1 else 0 end) as a12_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801504
+										then 1 else 0 end) as a13_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 515691
+										then 1 else 0 end) as a14_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 804400
+										then 1 else 0 end) as a15_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 812355
+										then 1 else 0 end) as a16_c_imp
 						,max(case when f1.activity_type_cd = 'view_impression' 
 										and f1.activity_nm = 'page_impression'
 										and f1.entity_nm = 'mortgages_preapproval'
@@ -112,12 +157,52 @@ with entry as (
 										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801537
 										then 1 else 0 end) > 0
 							or 
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 514502
+										then 1 else 0 end) > 0
+							or
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801607
+										then 1 else 0 end) > 0
+							or
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801599
+										then 1 else 0 end) > 0
+							or
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 677249
+										then 1 else 0 end) > 0
+							or
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801591
+										then 1 else 0 end) > 0
+							or
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801504
+										then 1 else 0 end) > 0
+							or
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 515691
+										then 1 else 0 end) > 0
+							or
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 804400
+										then 1 else 0 end) > 0
+							or
 							max(case when f1.activity_type_cd = 'view_impression' 
 										and f1.activity_nm = 'page_impression'
 										and f1.entity_nm = 'mortgages_preapproval'
 										then 1 else 0 end) > 0
-                             or
-                             max(case when f1.activity_type_cd = 'view_impression' 
+                             				or
+                             				max(case when f1.activity_type_cd = 'view_impression' 
 										and f1.activity_nm = 'page_impression'
 										and f1.entity_nm = 'mortgage_preapproval_top_lenders'
 										then 1 else 0 end) > 0
