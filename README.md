@@ -1,2 +1,2 @@
-# startqueries
+# Adhoc
 Trying new queries
