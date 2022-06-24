@@ -117,7 +117,7 @@ with entry as (
 										then f1.activity_id else null end) as b2_preappr_pv
 				from PROD_CORE.DATA.F_ACTIVITY f1
 				where 1=1
-				and f1.dw_eff_dt between '2022-05-15' and '2022-05-21'
+				and f1.dw_eff_dt between '2022-05-15' and '2022-05-21' --change to whatever dates you need the data for
 				and f1.activity_type_cd in ('view_impression','element_impression')
 				group by 1,2,3
 				having (
