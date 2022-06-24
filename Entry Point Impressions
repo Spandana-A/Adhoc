@@ -1,0 +1,153 @@
+with entry as (
+
+			select 
+			*
+			,(case when (a1_p_imp +
+				a2_f_imp + 
+				a3_p_imp + 
+				a4_c_imp + 
+				a5_c_imp + 
+				a6_c_imp + 
+				a7_c_imp + 
+				a8_p_imp +
+                a9_p_imp) > 0 then 1 else 0 end) as any_entry
+			,(b1_e_point_imp + b2_preappr_pv) as entry_tot_imp
+			from (
+				select 
+						f1.device_id
+                        ,f1.session_id
+						--,f1.navigation_id
+						,f1.dw_eff_dt
+						--
+						,max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm = 'mortgages_calculator_form' 
+										then 1 else 0 end) as a1_p_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.entity_nm in ('mrt_calculator','mrt_calculator_monthly_payment','mrt_calculator_latest_rates')
+										and f1.form_nm in ('mrt_calculator','mrt_calculator_monthly_payment','mrt_calculator_latest_rates')
+										then 1 else 0 end) as a2_f_imp
+						,max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm in ('mortgages_home_affordability_calculator_form','mortgages_home_affordability_calculator')
+										then 1 else 0 end) as a3_p_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 514469
+										then 1 else 0 end) as a4_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 513195
+										then 1 else 0 end) as a5_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 514345
+										then 1 else 0 end) as a6_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801537
+										then 1 else 0 end) as a7_c_imp
+						,max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm = 'mortgages_preapproval'
+										then 1 else 0 end) as a8_p_imp 
+                         ,max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm = 'mortgage_preapproval_top_lenders'
+										then 1 else 0 end) as a9_p_imp
+						,max(case when f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_IS_MOBILE = true then 'mobile'
+									when f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_IS_PC = true then 'pc'
+									when f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_IS_TABLET = true then 'tablet'
+									else 'unknown' end) as dvc_type
+						,max(f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_BROWSER_FAMILY) as dvc_browser
+						,count(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'distributed_shopping_experience'
+										and f1.entity_nm = 'dse_hlm_application'
+										then f1.activity_id else null end) as b1_e_point_imp
+						,count(case when f1.activity_nm = 'form_impression'
+										and f1.entity_nm = 'home_lead_match'
+										and f1.section_nm = 'home_lead_match'
+										and f1.page_id in ('2a74b9a431997bfaf44f19e6ece57da1919eea17', '7c8a9bb8415c7de9f399a048c94fe3e44e0c0119')
+										then f1.activity_id else null end) as b2_preappr_pv
+				from PROD_CORE.DATA.F_ACTIVITY f1
+				where 1=1
+				and f1.dw_eff_dt between '2022-05-15' and '2022-05-21'
+				and f1.activity_type_cd in ('view_impression','element_impression')
+				group by 1,2,3
+				having (
+							max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm = 'mortgages_calculator_form' 
+										then 1 else 0 end) > 0
+							or
+							max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.entity_nm in ('mrt_calculator','mrt_calculator_monthly_payment','mrt_calculator_latest_rates')
+										and f1.form_nm in ('mrt_calculator','mrt_calculator_monthly_payment','mrt_calculator_latest_rates')
+										then 1 else 0 end) > 0
+							or 
+							max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm in ('mortgages_home_affordability_calculator_form','mortgages_home_affordability_calculator')
+										then 1 else 0 end) > 0
+							or 
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 514469
+										then 1 else 0 end) > 0
+							or 
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 513195
+										then 1 else 0 end) > 0 
+							or 
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 514345
+										then 1 else 0 end) > 0
+							or 
+							max(case when f1.activity_type_cd = 'view_impression'
+										and f1.activity_nm = 'content_impression'
+										and f1.ADDITIONAL_ATTRIBUTES:CONTENT_ID = 801537
+										then 1 else 0 end) > 0
+							or 
+							max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm = 'mortgages_preapproval'
+										then 1 else 0 end) > 0
+                             or
+                             max(case when f1.activity_type_cd = 'view_impression' 
+										and f1.activity_nm = 'page_impression'
+										and f1.entity_nm = 'mortgage_preapproval_top_lenders'
+										then 1 else 0 end) > 0
+							or 
+							count(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'distributed_shopping_experience'
+										and f1.entity_nm = 'dse_hlm_application'
+										then f1.activity_id else null end) > 0
+							or 
+							count(case when f1.activity_nm = 'form_impression'
+										and f1.entity_nm = 'home_lead_match'
+										and f1.section_nm = 'home_lead_match'
+										and f1.page_id in ('2a74b9a431997bfaf44f19e6ece57da1919eea17', '7c8a9bb8415c7de9f399a048c94fe3e44e0c0119')
+										then f1.activity_id else null end) > 0
+							) 
+
+						)
+				)
+
+-- aggreg/metric query
+
+select 
+		dt.week_nr
+		,count(distinct case when any_entry > 0 then entry.device_id else null end) as any_entry_dvc --# of unique devices who have visited any page with an entry point
+		,count(distinct case when entry_tot_imp > 0 then entry.device_id else null end) as entry_imp_dvc --# of unique devices who have seen an entry point element
+		,sum(entry.entry_tot_imp) as entry_imp --# of entry point element impressions
+from entry 
+left join PROD_CORE.DATA.D_DATE dt on entry.dw_eff_dt = dt.dw_eff_dt
+ 
+			where 1=1 and any_entry = 1 and entry.device_id <> 'undefined'
+		  group by 1
+			order by 1 desc
+;
