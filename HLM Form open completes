@@ -1,0 +1,626 @@
+with lfstep as (
+
+				select
+						f1.device_id
+				    	,f1.session_id
+                      ,f1.navigation_id
+
+						,f1.dw_eff_dt
+						--
+
+                --zipcode       
+  	                        ,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_intro'
+										and f1.section_nm = 'zipcode'
+										then 1 else 0 end) as zz_f_imp                     
+                           ,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+                                        and f1.section_nm = 'zipcode'
+										then 1 else 0 end) as z0_f_imp
+                          ,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'zipcode'
+										then 1 else 0 end) as z0_f_imp_refi
+  --New Loan Purpose form step
+                        ,max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                        and f1.form_nm = 'home_lead_match'
+                                        and f1.section_nm = 'loanPurpose'
+                                        then 1 else 0 end) as znew0_f_imp
+              ,max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                        and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'loanPurpose'
+                                        then 1 else 0 end) as znew0_f_imp_refi
+  --Branch for Refi
+                        ,max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                      --  and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'refinancePurpose'
+                                        then 1 else 0 end) as zz1_f_imp
+                         ,max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                      --  and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'refinancePropertyType'
+                                        then 1 else 0 end) as zz2_f_imp
+                         ,max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                      --  and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'refinancePropertyPurpose'
+                                        then 1 else 0 end) as zz3_f_imp
+                         ,max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                       -- and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'refinancePropertyValue'
+                                        then 1 else 0 end) as zz4_f_imp
+                         ,max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                      --  and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'refinanceMortgageBalance'
+                                        then 1 else 0 end) as zz5_f_imp
+                         ,max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                      --  and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'refinanceCashOut'
+                                        then 1 else 0 end) as zz6_f_imp
+	---Branch for Purchse
+                        ,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'propertyType'
+										then 1 else 0 end) as z1_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'propertyPurpose'
+										then 1 else 0 end) as z2_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'homeBuyingStage'
+										then 1 else 0 end) as z3_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'purchasePrice'
+										then 1 else 0 end) as z5_f_imp
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'downPayment'
+										then 1 else 0 end) as z6_f_imp
+  --Common Branch
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'creditScore'
+										then 1 else 0 end) as z7_f_imp
+                        ,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'creditScore'
+										then 1 else 0 end) as z7_f_imp_refi
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'employmentType'
+										then 1 else 0 end) as z8_f_imp
+                        ,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'employmentType'
+										then 1 else 0 end) as z8_f_imp_refi
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'annualIncome'
+										then 1 else 0 end) as z9_f_imp
+                         ,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'annualIncome'
+										then 1 else 0 end) as z9_f_imp_refi
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'militaryQuestion'
+										then 1 else 0 end) as z10_f_imp
+                         ,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'militaryQuestion'
+										then 1 else 0 end) as z10_f_imp_refi
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'name'
+										then 1 else 0 end) as z12_f_imp
+                        ,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'name'
+										then 1 else 0 end) as z12_f_imp_refi
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'emailAddress'
+										then 1 else 0 end) as z13_f_imp
+                        ,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'emailAddress'
+										then 1 else 0 end) as z13_f_imp_refi
+						,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'phoneNumber'
+										then 1 else 0 end) as z14_f_imp
+                        ,max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'phoneNumber'
+										then 1 else 0 end) as z14_f_imp_refi
+						,max(case when f1.activity_type_cd = 'form'
+										and f1.activity_nm = 'form_submitted'
+										and f1.form_nm in ('home_lead_match')
+										then 1 else 0 end) as z15_e_int
+                        ,max(case when f1.activity_type_cd = 'form'
+										and f1.activity_nm = 'form_submitted'
+										and f1.form_nm in ('home_lead_match_refinance')
+										then 1 else 0 end) as z16_e_int
+						,max(case when f1.activity_type_cd = 'form'
+										and f1.activity_nm = 'form_submitted'
+										and f1.form_nm in ('home_lead_match','home_lead_match_refinance')
+										then f1.activity_ts else null end) as z15_submit_max_ts
+						,max(case when f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_IS_MOBILE = true then 'mobile'
+									when f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_IS_PC = true then 'pc'
+									when f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_IS_TABLET = true then 'tablet'
+									else 'unknown' end) as dvc_type
+						,max(f1.ADDITIONAL_ATTRIBUTES:WEB_USER_AGENT_BROWSER_FAMILY) as dvc_browser
+				from PROD_CORE.DATA.F_ACTIVITY f1
+				where 1=1
+				--and ((datediff(day,f1.DW_EFF_DT,'2022-04-16')) < 84)
+				and f1.DW_EFF_DT BETWEEN '2022-04-10' AND '2022-06-25' ---change as needed
+				and f1.activity_type_cd in ('form','element_impression')
+				and f1.form_nm in ('home_lead_match','home_lead_match_refinance')
+				group by 1,2
+  ,3,4
+
+				having (
+						
+                        max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+                                        and f1.section_nm = 'zipcode'
+										then 1 else 0 end) >0 
+                  or
+                          max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'zipcode'
+										then 1 else 0 end) > 0
+                    or
+                        max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                        and f1.form_nm = 'home_lead_match'
+                                        and f1.section_nm = 'loanPurpose'
+                                        then 1 else 0 end) > 0
+                  or
+                    max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                        and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'loanPurpose'
+                                        then 1 else 0 end) > 0
+                or
+                      max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                       -- and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'refinancePurpose'
+                                        then 1 else 0 end) > 0
+                  or
+                         max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                       -- and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'refinancePropertyType'
+                                        then 1 else 0 end) > 0
+                  or
+                         max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                       -- and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'refinancePropertyPurpose'
+                                        then 1 else 0 end) > 0
+                  or
+                         max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                       -- and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'refinancePropertyValue'
+                                        then 1 else 0 end) > 0
+                  or
+                         max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                      --  and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'refinanceMortgageBalance'
+                                        then 1 else 0 end) > 0
+                  or
+                         max(case when f1.activity_type_cd = 'element_impression'
+                                        and f1.activity_nm = 'form_impression'
+                                      --  and f1.form_nm = 'home_lead_match_refinance'
+                                        and f1.section_nm = 'refinanceCashOut'
+                                        then 1 else 0 end) >0
+                or
+                        max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'propertyType'
+										then 1 else 0 end) > 0
+                  or
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'propertyPurpose'
+										then 1 else 0 end) > 0
+                  or
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'homeBuyingStage'
+										then 1 else 0 end) > 0
+                  or
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'purchasePrice'
+										then 1 else 0 end) > 0
+                  or
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'downPayment'
+										then 1 else 0 end) > 0
+                  or
+                        max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'creditScore'
+										then 1 else 0 end) > 0
+                  or
+                        max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'creditScore'
+										then 1 else 0 end) > 0
+                  or
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'employmentType'
+										then 1 else 0 end) > 0
+                  or
+                        max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'employmentType'
+										then 1 else 0 end) > 0
+                  or
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'annualIncome'
+										then 1 else 0 end) > 0
+                  or
+                         max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'annualIncome'
+										then 1 else 0 end) > 0
+                  or
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'militaryQuestion'
+										then 1 else 0 end) > 0
+                  or
+                         max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'militaryQuestion'
+										then 1 else 0 end) > 0
+                  or
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'name'
+										then 1 else 0 end) > 0
+                  or
+                        max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'name'
+										then 1 else 0 end) > 0
+                  or
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'emailAddress'
+										then 1 else 0 end) > 0
+                  or
+                        max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'emailAddress'
+										then 1 else 0 end) > 0
+                  or
+						max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match'
+										and f1.section_nm = 'phoneNumber'
+										then 1 else 0 end) > 0
+                  or
+                        max(case when f1.activity_type_cd = 'element_impression'
+										and f1.activity_nm = 'form_impression'
+										and f1.form_nm = 'home_lead_match_refinance'
+										and f1.section_nm = 'phoneNumber'
+										then 1 else 0 end) > 0
+                  or
+						max(case when f1.activity_type_cd = 'form'
+										and f1.activity_nm = 'form_submitted'
+										and f1.form_nm in ('home_lead_match')
+										then 1 else 0 end) > 0
+                  or
+                        max(case when f1.activity_type_cd = 'form'
+										and f1.activity_nm = 'form_submitted'
+										and f1.form_nm in ('home_lead_match_refinance')
+										then 1 else 0 end) > 0
+
+				)
+  ),
+                loan_pur as (
+                        select device_id,activity_ts,dw_eff_dt,cast(ADDITIONAL_ATTRIBUTES:VALUE_S as string) as loan_purpose, ROW_NUMBER() OVER (PARTITION BY DEVICE_ID,DW_EFF_DT order by ACTIVITY_TS desc) as RNK
+                  from PROD_CORE.DATA.F_ACTIVITY
+                            where activity_nm = 'mortgage_purpose_updated'
+                                and entity_nm in ('home_lead_match','home_lead_match_refinance')
+                                and form_nm in ('home_lead_match','home_lead_match_refinance')
+                                and DW_EFF_DT >= '2022-03-20'
+                )
+			select
+            --*
+			xx.week
+		    ,count(distinct case when (xx.any_lform_step_old > 0 or xx.any_lform_step_new > 0) then xx.device_id else null end) as m3_formOpens_dvc
+           ,count(distinct case when loan_pur.rnk = 1 /*and loan_pur.loan_purpose = 'purchase'*/and (xx.any_lform_step_old > 0 or xx.any_pur_lform_step_new > 0) then xx.device_id else null end) as m3_purchase_formOpens_dvc
+          ,count(distinct case when loan_pur.rnk = 1 /*and loan_pur.loan_purpose = 'refinance'*/and (xx.any_refi_lform_step_old > 0 or xx.any_refi_lform_step_new > 0) then xx.device_id else null end) as m3_refi_formOpens_dvc
+		,count(distinct case when  (xx.pur_lform_complete_old > 0 or xx.pur_lform_complete_new > 0 ) then xx.device_id else null end) as pur_formCompletes_dvc
+          ,count(distinct case when (xx.refi_lform_complete_old > 0 or xx.refi_lform_complete_new > 0) then xx.device_id else null end) as refi_formCompletes_dvc
+
+	from (
+					select
+					dt.month_start_dt as month
+					,dt.week_nr as week
+					,lfstep.*
+					--
+					---Before Bug
+                        ,case when lfstep.dw_eff_dt < '2022-05-24' then
+                        ( lfstep.zz_f_imp +
+                         lfstep.znew0_f_imp +
+                        lfstep.zz1_f_imp +
+                        lfstep.zz2_f_imp +
+                        lfstep.zz3_f_imp +
+                        lfstep.zz4_f_imp +
+                        lfstep.zz5_f_imp +
+                        lfstep.zz6_f_imp +
+					 	lfstep.z1_f_imp +
+						lfstep.z2_f_imp +
+						lfstep.z3_f_imp +
+						lfstep.z5_f_imp +
+						lfstep.z6_f_imp +
+						lfstep.z7_f_imp +
+						lfstep.z8_f_imp +
+						lfstep.z9_f_imp +
+						lfstep.z10_f_imp +
+						lfstep.z12_f_imp +
+						lfstep.z13_f_imp +
+						lfstep.z14_f_imp) end as any_lform_step_old
+                      
+                      ,case when lfstep.dw_eff_dt < '2022-05-24' then
+                       (lfstep.zz_f_imp +
+                       lfstep.znew0_f_imp +
+                       -- lfstep.zz1_f_imp +
+                       -- lfstep.zz2_f_imp +
+                       -- lfstep.zz3_f_imp +
+                        --lfstep.zz4_f_imp +
+                       -- lfstep.zz5_f_imp +
+                       -- lfstep.zz6_f_imp +
+					 	lfstep.z1_f_imp +
+						lfstep.z2_f_imp +
+						lfstep.z3_f_imp +
+						lfstep.z5_f_imp +
+						lfstep.z6_f_imp +
+						lfstep.z7_f_imp +
+						lfstep.z8_f_imp +
+						lfstep.z9_f_imp +
+						lfstep.z10_f_imp +
+						lfstep.z12_f_imp +
+						lfstep.z13_f_imp +
+						lfstep.z14_f_imp) end as any_pur_lform_step_old
+
+                    , case when lfstep.dw_eff_dt < '2022-05-24' then
+                        (lfstep.zz_f_imp +
+                        lfstep.znew0_f_imp +
+                        lfstep.zz1_f_imp +
+                        lfstep.zz2_f_imp +
+                        lfstep.zz3_f_imp +
+                        lfstep.zz4_f_imp +
+                        lfstep.zz5_f_imp +
+                        lfstep.zz6_f_imp +
+					 	--lfstep.z1_f_imp +
+						--lfstep.z2_f_imp +
+						--lfstep.z3_f_imp +
+						--lfstep.z5_f_imp +
+						--lfstep.z6_f_imp +
+						lfstep.z7_f_imp +
+						lfstep.z8_f_imp +
+						lfstep.z9_f_imp +
+						lfstep.z10_f_imp +
+						lfstep.z12_f_imp +
+						lfstep.z13_f_imp +
+						lfstep.z14_f_imp) end as any_refi_lform_step_old
+
+					,(case when lfstep.dw_eff_dt < '2022-05-24'
+                        and lfstep.z1_f_imp > 0
+                       -- and (case when lfstep.DW_EFF_DT >= '2022-04-05' then lfstep.znew0_f_imp else 1 end) > 0
+						and lfstep.z2_f_imp > 0
+						and lfstep.z3_f_imp > 0
+						and lfstep.z5_f_imp > 0
+						and lfstep.z6_f_imp > 0
+						and lfstep.z7_f_imp > 0
+						and lfstep.z8_f_imp > 0
+						and lfstep.z10_f_imp > 0
+						and lfstep.z12_f_imp > 0
+						and lfstep.z13_f_imp > 0
+						and lfstep.z14_f_imp > 0
+						and lfstep.z15_e_int > 0 then 1 else 0 end) as pur_lform_complete_old
+
+                    ,(case when lfstep.dw_eff_dt <= '2022-05-24'
+                      --lfstep.znew0_f_imp > 0
+                         and lfstep.zz1_f_imp > 0
+                        and lfstep.zz2_f_imp > 0
+                        and lfstep.zz3_f_imp > 0
+                        and lfstep.zz4_f_imp > 0
+                        and lfstep.zz5_f_imp > 0
+                        and lfstep.zz6_f_imp > 0
+						and lfstep.z7_f_imp > 0
+						and lfstep.z8_f_imp > 0
+                      	--and lfstep.z9_f_imp > 0
+						and lfstep.z10_f_imp > 0
+						and lfstep.z12_f_imp > 0
+						and lfstep.z13_f_imp > 0
+						and lfstep.z14_f_imp > 0
+						and lfstep.z16_e_int > 0 then 1 else 0 end) as refi_lform_complete_old
+      
+      
+                    ---After Data Bug
+      
+                       , case when lfstep.dw_eff_dt >= '2022-05-24' then
+                        (lfstep.z0_f_imp +
+                       lfstep.znew0_f_imp +
+                        lfstep.zz1_f_imp +
+                        lfstep.zz2_f_imp +
+                        lfstep.zz3_f_imp +
+                        lfstep.zz4_f_imp +
+                        lfstep.zz5_f_imp +
+                        lfstep.zz6_f_imp +
+					 	lfstep.z1_f_imp +
+						lfstep.z2_f_imp +
+						lfstep.z3_f_imp +
+						lfstep.z5_f_imp +
+						lfstep.z6_f_imp +
+						lfstep.z7_f_imp +
+						lfstep.z8_f_imp +
+						lfstep.z9_f_imp +
+						lfstep.z10_f_imp +
+						lfstep.z12_f_imp +
+						lfstep.z13_f_imp +
+						lfstep.z14_f_imp +
+                        lfstep.z0_f_imp_refi +
+                         lfstep.znew0_f_imp_refi +
+                        lfstep.z7_f_imp_refi +
+                        lfstep.z8_f_imp_refi +
+                         lfstep.z9_f_imp_refi + 
+                       lfstep.z10_f_imp_refi + 
+                        lfstep.z12_f_imp_refi +
+                        lfstep.z13_f_imp_refi +
+                     lfstep.z14_f_imp_refi) end as any_lform_step_new
+              
+                    , case when lfstep.dw_eff_dt >= '2022-05-24' then
+                       (lfstep.z0_f_imp +
+                       lfstep.znew0_f_imp +
+                       -- lfstep.zz1_f_imp +
+                       -- lfstep.zz2_f_imp +
+                       -- lfstep.zz3_f_imp +
+                        --lfstep.zz4_f_imp +
+                       -- lfstep.zz5_f_imp +
+                       -- lfstep.zz6_f_imp +
+					 	lfstep.z1_f_imp +
+						lfstep.z2_f_imp +
+						lfstep.z3_f_imp +
+						lfstep.z5_f_imp +
+						lfstep.z6_f_imp +
+						lfstep.z7_f_imp +
+						lfstep.z8_f_imp +
+						lfstep.z9_f_imp +
+						lfstep.z10_f_imp +
+						lfstep.z12_f_imp +
+						lfstep.z13_f_imp +
+						lfstep.z14_f_imp) end as any_pur_lform_step_new
+
+                    , case when lfstep.dw_eff_dt >= '2022-05-24' then
+                      (
+                        lfstep.z0_f_imp_refi +
+                        lfstep.znew0_f_imp_refi +
+                        lfstep.zz1_f_imp +
+                        lfstep.zz2_f_imp +
+                        lfstep.zz3_f_imp +
+                        lfstep.zz4_f_imp +
+                        lfstep.zz5_f_imp +
+                        lfstep.zz6_f_imp +
+					 	--lfstep.z1_f_imp +
+						--lfstep.z2_f_imp +
+						--lfstep.z3_f_imp +
+						--lfstep.z5_f_imp +
+						--lfstep.z6_f_imp +
+						lfstep.z7_f_imp_refi +
+						lfstep.z8_f_imp_refi +
+						lfstep.z9_f_imp_refi +
+						lfstep.z10_f_imp_refi +
+						lfstep.z12_f_imp_refi +
+						lfstep.z13_f_imp_refi +
+						lfstep.z14_f_imp_refi) end as any_refi_lform_step_new
+
+					,(case when lfstep.dw_eff_dt >= '2022-05-24' 
+                       --lfstep.znew0_f_imp > 0
+                        and lfstep.z1_f_imp > 0
+						and lfstep.z2_f_imp > 0
+					    and lfstep.z3_f_imp > 0
+					    and lfstep.z5_f_imp > 0
+						and lfstep.z6_f_imp > 0
+						and lfstep.z7_f_imp > 0
+						and lfstep.z8_f_imp > 0
+						and lfstep.z10_f_imp > 0
+						and lfstep.z12_f_imp > 0
+						and lfstep.z13_f_imp > 0
+						and lfstep.z14_f_imp > 0
+						and 
+                      lfstep.z15_e_int > 0 then 1 else 0 end) as pur_lform_complete_new
+
+                ,(case when lfstep.dw_eff_dt >= '2022-05-24' 
+                       -- lfstep.znew0_f_imp_refi > 0
+                  --      lfstep.zz1_f_imp > 0
+                       -- and lfstep.zz2_f_imp > 0
+                        and lfstep.zz3_f_imp > 0
+                        and lfstep.zz4_f_imp > 0
+                       and lfstep.zz5_f_imp > 0
+                       and lfstep.zz6_f_imp > 0
+					--	and (lfstep.z7_f_imp_refi > 0 or lfstep.z7_f_imp > 0)
+						--and (lfstep.z8_f_imp_refi > 0 or lfstep.z8_f_imp > 0)
+						--and (lfstep.z10_f_imp_refi > 0 or lfstep.z10_f_imp > 0)
+						and (lfstep.z12_f_imp_refi > 0 or lfstep.z12_f_imp > 0)
+						and (lfstep.z13_f_imp_refi > 0 or lfstep.z13_f_imp > 0)
+						and (lfstep.z14_f_imp_refi > 0 or lfstep.z14_f_imp > 0)
+					  and
+                      lfstep.z15_e_int > 0 then 1 else 0 end) as refi_lform_complete_new
+					from lfstep
+					left join PROD_CORE.DATA.D_DATE dt on lfstep.dw_eff_dt = dt.dw_eff_dt
+					) xx
+ left join loan_pur
+            on xx.device_id = loan_pur.device_id
+          --  and xx.dw_eff_dt = loan_pur.dw_eff_dt
+            and loan_pur.rnk = 1
+
+
+			where 1=1 
+            and xx.device_id <> 'undefined'   
+		 group by 1      
+		order by 1
+

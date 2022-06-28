@@ -1,0 +1,247 @@
+--'pur_' refers to Purchase related counts and 'refi_' refers to Refinance related counts
+
+with impr as (
+select
+a.dw_eff_dt
+,a.device_id
+,a.session_id
+,a.navigation_id
+,a.activity_id
+,a.marketplace_institution_id
+,(case
+				when a.marketplace_institution_id = 'c5f427ec-48d1-11e8-9c02-3fd93caf0574' then 'NASB'
+				when a.marketplace_institution_id = 'c5ef35b6-48d1-11e8-9c02-3ba377fa4488' then 'New American Funding'
+				when a.marketplace_institution_id = 'c5ec35b4-48d1-11e8-9c02-4b750722af6c' then 'NBKC'
+				when a.marketplace_institution_id in ('c5ea02ee-48d1-11e8-9c02-9bce45af5314'
+														-- quicken has diff ID
+														,'c5edd504-48d1-11e8-9c02-77fe06537299') then 'Rocket Mortgage'
+				when a.marketplace_institution_id = 'c5eeea84-48d1-11e8-9c02-0b2e43b9e524' then 'BNC National Bank'
+				when a.marketplace_institution_id = 'c5ee62da-48d1-11e8-9c02-f3b810b92c01' then 'Better'
+				when a.marketplace_institution_id = 'c5eb5fe0-48d1-11e8-9c02-8315e28ef6d6' then 'loanDepot'
+				when a.marketplace_institution_id = 'c5f24210-48d1-11e8-9c02-83ac9ee1c666' then 'SoFi'
+				when a.marketplace_institution_id = 'c5f4b6c6-48d1-11e8-9c02-b74b15c1f723' then 'AmeriSave'
+				when a.marketplace_institution_id = 'ed086c50-5f9f-11e8-9c02-2f58a22cc5d9' then 'LenderFi'
+				when a.marketplace_institution_id = 'c5f1272c-48d1-11e8-9c02-db13992d4f1f' then 'PennyMac'
+				when a.marketplace_institution_id = 'c5ead6e2-48d1-11e8-9c02-9fec6cd0fbff' then 'Guaranteed Rate'
+				when a.marketplace_institution_id = 'c5f1fae4-48d1-11e8-9c02-034eb42a2937' then 'Veterans United'
+				when a.marketplace_institution_id = '2a19195c-cacb-11eb-a41c-4f7b65321a06' then 'Better Real Estate'
+				when a.marketplace_institution_id = '8ecec748-38db-11eb-b58d-3f5d38533912' then 'Homelight'
+				when a.marketplace_institution_id = 'c5f2870c-48d1-11e8-9c02-8f8c3e99ec2f' then 'Northpointe'
+
+				else 'unmapped' end) as institution_nm
+,a.entity_nm
+from PROD_CORE.DATA.F_ACTIVITY a
+where 1=1
+and a.dw_eff_dt BETWEEN '2022-05-01' and '2022-05-07'--change to dates as you need
+and a.activity_type_cd = 'element_impression'
+and a.activity_nm = 'product_impression'
+and a.entity_nm in ('home_lead_match_offer_product_impression'
+						,'hlm_additional_lender_card'
+						,'hlm_real_estate_agent_product_impression','home_lead_match_refinance_offer_product_impression')
+group by 1,2,3,4,5,6,7,8
+order by 1,2,3,4,5,6,7,8
+)
+
+,shopf as (
+
+select
+d.event_occurred_at::DATE as dw_eff_dt
+,d.device_id
+,d.marketplace_institution_id
+,(case
+				when d.marketplace_institution_id = 'c5f427ec-48d1-11e8-9c02-3fd93caf0574' then 'NASB'
+				when d.marketplace_institution_id = 'c5ef35b6-48d1-11e8-9c02-3ba377fa4488' then 'New American Funding'
+				when d.marketplace_institution_id = 'c5ec35b4-48d1-11e8-9c02-4b750722af6c' then 'NBKC'
+				when d.marketplace_institution_id in ('c5ea02ee-48d1-11e8-9c02-9bce45af5314'
+														-- quicken has diff ID
+														,'c5edd504-48d1-11e8-9c02-77fe06537299') then 'Rocket Mortgage'
+				when d.marketplace_institution_id = 'c5eeea84-48d1-11e8-9c02-0b2e43b9e524' then 'BNC National Bank'
+				when d.marketplace_institution_id = 'c5ee62da-48d1-11e8-9c02-f3b810b92c01' then 'Better'
+				when d.marketplace_institution_id = 'c5eb5fe0-48d1-11e8-9c02-8315e28ef6d6' then 'loanDepot'
+				when d.marketplace_institution_id = 'c5f24210-48d1-11e8-9c02-83ac9ee1c666' then 'SoFi'
+				when d.marketplace_institution_id = 'c5f4b6c6-48d1-11e8-9c02-b74b15c1f723' then 'AmeriSave'
+				when d.marketplace_institution_id = 'ed086c50-5f9f-11e8-9c02-2f58a22cc5d9' then 'LenderFi'
+				when d.marketplace_institution_id = 'c5f1272c-48d1-11e8-9c02-db13992d4f1f' then 'PennyMac'
+				when d.marketplace_institution_id = 'c5ead6e2-48d1-11e8-9c02-9fec6cd0fbff' then 'Guaranteed Rate'
+				when d.marketplace_institution_id = 'c5f1fae4-48d1-11e8-9c02-034eb42a2937' then 'Veterans United'
+				when d.marketplace_institution_id = '2a19195c-cacb-11eb-a41c-4f7b65321a06' then 'Better Real Estate'
+				when d.marketplace_institution_id = '8ecec748-38db-11eb-b58d-3f5d38533912' then 'Homelight'
+				when d.marketplace_institution_id = 'c5f2870c-48d1-11e8-9c02-8f8c3e99ec2f' then 'Northpointe'
+
+				else 'unmapped' end) as institution_nm
+--
+,max(case when d.finish_type = 'lead_inputflow'
+			and d.cta_type = 'apply_now_button'
+			and d.deployable_name = 'diy-tools-mortgage-rates'
+			and d.product_impression_id=impr.activity_id
+			and impr.entity_nm = 'home_lead_match_offer_product_impression' then 1 else 0 end) as pur_primary_match
+  ,max(case when d.finish_type = 'lead_inputflow'
+			and d.cta_type = 'apply_now_button'
+			and d.deployable_name = 'diy-tools-mortgage-rates'
+			and d.product_impression_id=impr.activity_id
+			and impr.entity_nm = 'home_lead_match_refinance_offer_product_impression' then 1 else 0 end) as refi_primary_match
+,max(case when date(d.event_occurred_at) < '2022-04-07'
+            and d.finish_type = 'after_lead_partner_website'
+			and d.cta_type in ('offer_link')
+            and impr.entity_nm = 'home_lead_match_offer_product_impression' then 1
+		when date(d.event_occurred_at) < '2022-04-07'
+            and d.finish_type = 'lead_inputflow'
+			and d.cta_type = 'apply_now_button'
+			and d.deployable_name = 'interstitial-client'
+		    and impr.entity_nm = 'home_lead_match_offer_product_impression' then 1
+        when date(d.event_occurred_at) >= '2022-04-07'
+				and d.finish_type = 'after_lead_partner_website'
+				and d.cta_type in ('offer_link', 'apply_now_button')
+				and impr.entity_nm = 'home_lead_match_offer_product_impression'
+				then 1 else 0 end) as pur_primary_match_clickout
+  ,max(case when date(d.event_occurred_at) < '2022-04-07'
+            and d.finish_type = 'after_lead_partner_website'
+			and d.cta_type in ('offer_link')
+             and impr.entity_nm = 'home_lead_match_refinance_offer_product_impression' then 1
+		when date(d.event_occurred_at) < '2022-04-07'
+            and d.finish_type = 'lead_inputflow'
+			and d.cta_type = 'apply_now_button'
+			and d.deployable_name = 'interstitial-client'
+		    and impr.entity_nm = 'home_lead_match_refinance_offer_product_impression' then 1
+        when date(d.event_occurred_at) >= '2022-04-07'
+				and d.finish_type = 'after_lead_partner_website'
+				and d.cta_type in ('offer_link', 'apply_now_button')
+				and impr.entity_nm = 'home_lead_match_refinance_offer_product_impression'
+				then 1 else 0 end) as refi_primary_match_clickout
+,max(case when d.event_occurred_at::DATE >= '2022-02-10'
+			and d.finish_type = 'external_content'
+			and d.cta_type = 'rest_of_product_card'
+			and d.marketplace_institution_id = impr.marketplace_institution_id
+			and impr.entity_nm = 'hlm_additional_lender_card' then 1
+		when d.event_occurred_at::DATE < '2022-02-10'
+			and d.finish_type = 'lead_inputflow'
+			and d.cta_type = 'apply_now_button'
+			and d.marketplace_institution_id = impr.marketplace_institution_id
+			and impr.entity_nm = 'hlm_additional_lender_card' then 1 else 0 end) as pur_addl_lender_submit
+,max(case when d.finish_type = 'external_application'
+			and d.cta_type = 'apply_now_button' then 1 else 0 end) as pur_re_agent_submit
+
+----revenue
+,max(case when d.finish_type = 'lead_inputflow'
+			and d.cta_type = 'apply_now_button'
+			and impr.entity_nm = 'home_lead_match_offer_product_impression' then e.commission_am
+			when d.finish_type = 'after_lead_partner_website'
+			and d.cta_type in ('offer_link','apply_now_button')
+			and impr.entity_nm = 'home_lead_match_offer_product_impression' then coalesce(e.commission_am,0) else 0 end) as pur_primary_match_rev
+,max(case when d.finish_type = 'lead_inputflow'
+			and d.cta_type = 'apply_now_button'
+			and impr.entity_nm = 'home_lead_match_refinance_offer_product_impression' then e.commission_am
+			when d.finish_type = 'after_lead_partner_website'
+			and d.cta_type in ('offer_link','apply_now_button')
+			and impr.entity_nm = 'home_lead_match_refinance_offer_product_impression' then coalesce(e.commission_am,0) else 0 end) as refi_primary_match_rev
+,max(case when d.event_occurred_at::DATE >= '2022-02-10'
+			and d.finish_type = 'external_content'
+			and d.cta_type = 'rest_of_product_card'
+			and d.marketplace_institution_id = impr.marketplace_institution_id
+			and impr.entity_nm = 'hlm_additional_lender_card' then coalesce(e.commission_am,0)
+		when d.event_occurred_at::DATE < '2022-02-10'
+			and d.finish_type = 'lead_inputflow'
+			and d.cta_type = 'apply_now_button'
+			and d.marketplace_institution_id = impr.marketplace_institution_id
+			and impr.entity_nm = 'hlm_additional_lender_card' then coalesce(e.commission_am,0) else 0 end) as pur_addl_lender_rev
+,max(case when d.finish_type = 'external_application'
+			and d.cta_type = 'apply_now_button' then coalesce(e.commission_am,0) else 0 end) as pur_re_agent_rev
+			
+from PROD_RAW.EVENTS.SHOPPING_FINISHED d
+left join impr on d.device_id=impr.device_id
+				and d.event_occurred_at::DATE=impr.dw_eff_dt
+left join PROD_CORE.DATA.F_ACTIVITY e on d.shopping_finish_id=e.shopping_finish_id
+				and d.device_id=e.device_id
+				and d.event_occurred_at::DATE=e.dw_eff_dt
+				and e.activity_type_cd = 'AFLT_TRAN'
+where 1=1
+				and d.event_occurred_at::DATE BETWEEN '2022-05-01' and '2022-05-07'--change to dates as you need
+				and d.finish_type in ('lead_inputflow'
+					,'after_lead_partner_website'
+					, 'external_application'
+					, 'external_content')
+				and d.SOURCE_URL_SIMPLE like '%nerdwallet.com/mortgages/mortgage-pre-approval/match%'
+				and d.cta_type in ('apply_now_button'
+									, 'offer_link'
+									,'rest_of_product_card')
+group by 1,2,3,4
+order by 1,2,3,4
+)
+select
+			xx.dw_eff_dt
+
+	 --primary matches (monetizable)
+	,count(distinct case when xx.pur_primary_lender_impr = 1 then xx.device_id
+		                        when xx.pur_primary_lender_match=1 then xx.device_id else null end) as pur_primary_match_dvc
+        ,count(distinct case when xx.refi_primary_lender_impr = 1 then xx.device_id
+		                        when xx.refi_primary_lender_match=1 then xx.device_id else null end) as refi_primary_match_dvc
+	--primary clickouts(overall) (non-monetizable)
+	,count(distinct case when xx.pur_primary_match_clickout = 1 then xx.device_id else null end) as pur_prim_clickout
+	,count(distinct case when xx.refi_primary_match_clickout = 1 then xx.device_id else null end) as refi_prim_clickout
+	
+//*Addition Lenders*//	
+	--addl_lend_match (non-monetizable)
+	,count(distinct case when xx.pur_addl_lender_impr = 1 then xx.device_id else null end) as pur_addl_len_match_dvc
+    --addl_lend_clickout (monetizable)
+	,count(distinct case when xx.pur_addl_lender_submit = 1 then xx.device_id else null end) as pur_addl_clickout
+    
+    
+//*Real Estate Agents*//	
+	--Real Estate Agent matches (non-monetizable)
+	,count(distinct case when xx.pur_re_agent_impr = 1 then xx.device_id else null end) as pur_re_agent_match_dvc
+    --Real Estate Agent clickouts (monetizable)
+	,count(distinct case when xx.pur_re_agent_submit = 1 then xx.device_id else null end) as pur_re_agent_clickout
+
+	
+	--Revenue
+	,sum(xx.pur_primary_match_rev) as pur_primary_rev
+	,sum(xx.refi_primary_match_rev) as refi_primary_rev
+	,sum(xx.pur_addl_lender_rev) as pur_addl_rev
+	,sum(xx.pur_re_agent_rev) as pur_re_rev
+	
+
+from (
+         select
+                impr.dw_eff_dt
+                ,dt.week_nr as week
+              , impr.device_id
+                ,impr.navigation_id
+              , impr.session_id
+             , impr.marketplace_institution_id
+              ,impr.institution_nm
+              , max(case
+                        when impr.entity_nm = 'home_lead_match_offer_product_impression' then 1
+                        else 0 end)                                                                          as pur_primary_lender_impr
+              , max(case
+                        when impr.entity_nm = 'home_lead_match_refinance_offer_product_impression' then 1
+                        else 0 end)                                                                          as refi_primary_lender_impr
+              , max(case when impr.entity_nm = 'hlm_additional_lender_card' then 1 else 0 end)               as pur_addl_lender_impr
+              , max(case
+                        when impr.entity_nm = 'hlm_real_estate_agent_product_impression' then 1
+                        else 0 end)                                                                          as pur_re_agent_impr
+--
+              , max(coalesce(shopf.pur_primary_match, 0))                                                    as pur_primary_lender_match
+              , max(coalesce(shopf.refi_primary_match, 0))                                                   as refi_primary_lender_match
+              , max(coalesce(shopf.pur_primary_match_clickout, 0))                                           as pur_primary_match_clickout
+              , max(coalesce(shopf.refi_primary_match_clickout, 0))                                          as refi_primary_match_clickout
+              , max(coalesce(shopf.pur_addl_lender_submit, 0))                                               as pur_addl_lender_submit
+              , max(coalesce(shopf.pur_re_agent_submit, 0))                                                  as pur_re_agent_submit
+	      
+	      ,max(coalesce(shopf.pur_primary_match_rev,0))                                                  as pur_primary_match_rev 
+	      ,max(coalesce(shopf.refi_primary_match_rev,0))                                                 as refi_primary_match_rev 
+	      ,max(coalesce(shopf.pur_addl_lender_rev,0))                                                    as pur_addl_lender_rev 
+	      ,max(coalesce(shopf.pur_re_agent_rev,0))                                                       as pur_re_agent_rev
+
+         from impr
+                  left join shopf on shopf.dw_eff_dt = impr.dw_eff_dt
+                            and shopf.device_id = impr.device_id
+                            and shopf.marketplace_institution_id = impr.marketplace_institution_id
+         	left join PROD_CORE.DATA.D_DATE dt on impr.dw_eff_dt = dt.dw_eff_dt
+
+         where 1 = 1
+         group by 1, 2, 3, 4,5,6,7
+         order by 1, 2, 3, 4,5,6,7
+     ) xx
+		    where 1=1 and xx.device_id <> 'undefined'
+		  group by 1
+			order by 1 desc
