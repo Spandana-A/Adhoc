@@ -219,6 +219,15 @@ biz_offers as
   and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%business%'
   and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
   and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  and dm.offer_id not in 
+  ( --avant exclusions start
+    '330cd6ad-534b-48e2-bfd5-624ccd3c408f',
+    '39d1ba76-691a-11ee-978c-4bab4ff1ed2c',
+    '42eb5348-6888-11ee-bb98-afefa6f0bd86',
+    '93742eec-6889-11ee-8800-4f5df38be3f7',
+    'a399cf2e-6876-11ee-9e22-032a8226065a',
+    'db068b88-688e-11ee-8013-7b20ca0725ba',
+    'f73a29b8-687a-11ee-b9da-f7dc61d0fbc5') --avant exclusions end,
   ),
 best_offers as 
    (
