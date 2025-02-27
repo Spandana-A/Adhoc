@@ -1,0 +1,819 @@
+with cpas as 
+    (
+    select 
+    cpa.marketplace_id
+    , replace(replace(cpa.current_month,'$',''),',','') :: INTEGER  as cpa 
+    from PROD_RAW.GOOGLESHEET.CC_CPA_TRACKER cpa 
+    where cpa.marketplace_id is not null
+    ),
+travel_offers as 
+  (
+  select 
+  'TRAVEL' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Credit Card','Credit Cards')
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text ilike '%travel-miles-credit-cards%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%student%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%business%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  and replace(dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:cobrand_airline,'"','') is null
+  and replace(dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:cobrand_hotel,'"','') is null
+  ),
+cash_offers as 
+    (
+  select 
+  'CASH_BACK' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Credit Card','Credit Cards')
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text ilike '%cash-rewards-credit-cards%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%student%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%business%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  and replace(dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:cobrand_airline,'"','') is null
+  and replace(dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:cobrand_hotel,'"','') is null
+  ),
+bt_offers as 
+  (
+  select 
+  'BALANCE_TRANSFER' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Credit Card','Credit Cards')
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text ilike '%balance-transfer-credit-cards%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%student%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%business%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  ),
+ bp_offers as 
+    (
+    select 
+  'BIG_PURCHASE' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Credit Card','Credit Cards')
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text ilike '%low-interest-credit-cards%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%student%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%business%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  ),
+  zero_offers as 
+    (
+    select 
+  'ZERO_PERCENT' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Credit Card','Credit Cards')
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text ilike  '%zero-percent-credit-cards%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%student%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%business%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  ),
+airline_offers as 
+    (
+    select 
+  'AIRLINE' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Credit Card','Credit Cards')
+  and (dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text ilike '%airline-credit-cards%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%student%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%business%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true)
+  ),
+bc_offers as 
+   (
+   select 
+  'BUILD_CREDIT' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Credit Card','Credit Cards')
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text ilike '%bad-credit-cards%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%student%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%business%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  and dm.offer_id not in 
+  ( --avant exclusions start
+    '330cd6ad-534b-48e2-bfd5-624ccd3c408f',
+    '39d1ba76-691a-11ee-978c-4bab4ff1ed2c',
+    '42eb5348-6888-11ee-bb98-afefa6f0bd86',
+    '93742eec-6889-11ee-8800-4f5df38be3f7',
+    'a399cf2e-6876-11ee-9e22-032a8226065a',
+    'db068b88-688e-11ee-8013-7b20ca0725ba',
+    'f73a29b8-687a-11ee-b9da-f7dc61d0fbc5') --avant exclusions end,
+    ),
+
+  
+rew_offers as 
+   (
+   select 
+  'REWARDS' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Credit Card','Credit Cards')
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text ilike '%rewards-credit-cards%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%student%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%business%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  ),
+stud_offers as 
+   (
+   select 
+  'STUDENT' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Credit Card','Credit Cards')
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text ilike '%student-credit-cards%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%business%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  ),
+  nftf_offers as 
+   (
+   select 
+  'NO_FOREIGN_TRANSACTION_FEE' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Credit Card','Credit Cards')
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text ilike '%rewards-credit-cards%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  ),
+biz_offers as 
+   (
+   select 
+  'BUSINESS' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Business Credit Cards','Credit Card','Credit Cards')
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text ilike '%business-credit-cards%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  ),
+  fair_offers as 
+   (
+   select 
+  'FAIR_CREDIT' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Credit Card','Credit Cards')
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:min_fico >= 629
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:max_fico <= 689
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%student%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%business%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  ),
+best_offers as 
+   (
+   select 
+  'BEST_OFFERS' as category,
+  dm.institution_id,
+  dm.offer_id,
+  dm.offer_name
+  from nexus.prod.d_sku dm
+  where dm.curr_in = true
+  and dm.sku_level = 'offer'
+  and dm.reporting_product_type in ('Credit Card','Credit Cards')
+ -- and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:rating_stars >= 4.5
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%student%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%business%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:compare_categories :: text not ilike '%shadow%'
+  and dm.supplementary:"ADDITIONAL_ATTRIBUTES":details:is_monetizing = true
+  ),
+  
+revenue_data as (
+select
+offer_id marketplace_id,
+category,
+                    (case when institution_id in (
+                                                 'a7c5a4a8-1ec2-11ef-b136-5780b542b31a', --Ally Bank
+                                                 '2655d651-ed34-4144-b474-79eb1b28998e' --Credit One
+                                                 ) 
+                             then array_construct('Marketplace')--'Marketplace'
+                         when offer_id in (
+                                         '0c479488-6869-11ee-b674-af592ed22f75', --Surge Mastercard
+                                         'ef5ccece-bf98-11ee-8e33-e7321b4107d1', --Verve Mastercard
+                                         'fd579d0a-bf94-11ee-a621-b738fd115250', --Revel Mastercard
+                                         'bf53a1a6-2192-11ef-9717-6723f83803b3' --Upgrade Life Rewards
+                                         ) 
+                             then array_construct('Marketplace')--'Marketplace'
+                        else array_construct() end)
+  disallowedProviders,
+device,
+product_impressions,
+revenue,
+offer_name
+from 
+(select *
+from 
+(select --travel
+trav.category,
+trav.offer_id,
+trav.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+trav.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join travel_offers trav 
+    on trav.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path in (  'best/credit-cards/travel',
+                            'm/credit-cards/excellent-travel-credit-cards',
+                            'm/credit-cards/excellent-travel-credit-cards-2',
+                             'the-best-credit-cards/travel'
+                            )
+ or fa.impression_section in (
+                                'travel_credit_cards_l3_page',
+                                'curated_offers_travel_results',
+                                'travel_credit_cards_l2_page',
+                                'curated_offers_travel_suggested',
+                                'native_market_see_details'
+                                )
+ or dv.pageview_url_path ilike '%reviews/credit-cards%' 
+ or dv.pageview_url_path ilike '%pers-rec-results%')
+--and trav.offer_id is not null
+group by trav.category,trav.offer_id,trav.offer_name,trav.institution_id,device)
+
+union all --cashback
+
+(select 
+cash.category,
+cash.offer_id,
+cash.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+cash.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join cash_offers cash 
+    on cash.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path in (  'best/credit-cards/cash-back',
+                            'm/credit-cards/excellent-cash-back-credit-cards',
+                            'm/credit-cards/excellent-cash-back-credit-cards-2',
+                            'the-best-credit-cards/cash-back'
+                            )
+ or fa.impression_section in (
+                            'cash_back_credit_cards_l3_page',
+                            'curated_offers_cash_back_results',
+                            'curated_offers_cash_back_suggested',
+                            'cash_back_credit_cards_l2_page',
+                            'native_market_see_details'
+                                )
+ or dv.pageview_url_path ilike '%reviews/credit-cards%' 
+ or dv.pageview_url_path ilike '%pers-rec-results%')
+--and trav.offer_id is not null
+group by cash.category,cash.offer_id,cash.offer_name,cash.institution_id,device)
+
+union all --balance transfer
+
+(select 
+bt.category,
+bt.offer_id,
+bt.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+bt.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join bt_offers bt 
+    on bt.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path in (  'best/credit-cards/balance-transfer',
+                            'm/credit-cards/pay-0-intro-interest-2',
+                            'm/credit-cards/pay-0-intro-interest',
+                            'm/credit-cards/start-saving-money-asap-pay-no-intro-interest-for-up-to-18-months',
+                             'the-best-credit-cards/balance-transfer'
+                            ) 
+ or fa.impression_section in (
+                            'balance_transfer_credit_cards_l2_page',
+                            'balance_transfer_credit_cards_l3_page',
+                            'curated_offers_pay_down_debt_suggested',
+                            'curated_offers_pay_down_debt_results',
+                            'native_market_see_details'
+                                )
+ or dv.pageview_url_path ilike '%reviews/credit-cards%' 
+ or dv.pageview_url_path ilike '%pers-rec-results%')
+--and trav.offer_id is not null
+group by bt.category,bt.offer_id,bt.offer_name,bt.institution_id,device)
+
+union all -- big purchase
+
+(select 
+bp.category,
+bp.offer_id,
+bp.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+bp.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join bp_offers bp 
+    on bp.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path in ( 'best/credit-cards/low-interest',
+                            'm/credit-cards/excellent-low-interest-credit-cards-2',
+                            'm/credit-cards/excellent-low-interest-credit-cards',
+                            'the-best-credit-cards/low-interest'
+                            )
+ or fa.impression_section in (
+                            'curated_offers_make_big_purchase_results',
+                            'curated_offers_make_big_purchase_suggested',
+                            'low_interest_credit_cards_l2_page',
+                            'low_interest_credit_cards_l3_page',
+                            'native_market_see_details'
+                                )
+ or dv.pageview_url_path ilike '%reviews/credit-cards%' 
+ or dv.pageview_url_path ilike '%pers-rec-results%')
+--and trav.offer_id is not null
+group by bp.category,bp.offer_id,bp.offer_name,bp.institution_id,device)
+
+union all -- zero percent
+
+(select 
+zp.category,
+zp.offer_id,
+zp.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+zp.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join zero_offers zp 
+    on zp.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path in (  'best/credit-cards/zero-percent',
+                            '/m/credit-cards/compare/zero-percent-credit-cards',
+                            'the-best-credit-cards/zero-percent'
+                            )
+ or dv.pageview_url_path ilike '%reviews/credit-cards%' 
+ or dv.pageview_url_path ilike '%pers-rec-results%')
+--and trav.offer_id is not null
+group by zp.category,zp.offer_id,zp.offer_name,zp.institution_id,device)
+
+
+union all --build credit
+
+(select 
+bc.category,
+bc.offer_id,
+bc.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+bc.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join bc_offers bc 
+    on bc.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path in (  'best/credit-cards/building-credit',
+                            'best/credit-cards/no-credit',
+                            'best/credit-cards/bad-credit',
+                            'the-best-credit-cards/building-credit'
+                            )
+ or fa.impression_section in (
+                            'building_credit_credit_cards_l3_page',
+                            'building_credit_credit_cards_l2_page',
+                            'curated_offers_credit_building_results',
+                            'native_market_see_details'
+                                )
+ or dv.pageview_url_path ilike '%reviews/credit-cards%' 
+ or dv.pageview_url_path ilike '%pers-rec-results%')
+--and trav.offer_id is not null
+group by bc.category,bc.offer_id,bc.offer_name,bc.institution_id,device)
+
+union all --fair credit
+
+(select 
+bc.category,
+bc.offer_id,
+bc.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+bc.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+inner join bc_offers bc 
+    on bc.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path in (  'best/credit-cards/fair-credit',
+                            'm/credit-cards/excellent-credit-cards-for-fair-credit',
+                            'the-best-credit-cards/fair-credit'
+                            )
+ or dv.pageview_url_path ilike '%reviews/credit-cards%' 
+ or dv.pageview_url_path ilike '%pers-rec-results%')
+--and trav.offer_id is not null
+group by bc.category,bc.offer_id,bc.offer_name,bc.institution_id,device)
+
+union all --rewards
+
+(select 
+rew.category,
+rew.offer_id,
+rew.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+rew.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join rew_offers rew 
+    on rew.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path in (  'best/credit-cards/rewards',
+                            'best/credit-cards/bonus-offers',
+                            'm/credit-cards/excellent-rewards-credit-cards-2',
+                            'm/credit-cards/excellent-rewards-credit-cards',
+                             'the-best-credit-cards/rewards'
+                            )
+ or fa.impression_section in (
+                            'rewards_credit_cards_l2_page',
+                            'rewards_credit_cards_l3_page',
+                            'native_market_see_details'
+                                )
+ or dv.pageview_url_path ilike '%reviews/credit-cards%' 
+ or dv.pageview_url_path ilike '%pers-rec-results%')
+--and trav.offer_id is not null
+group by rew.category,rew.offer_id,rew.offer_name,rew.institution_id,device)
+
+union all --student
+
+(select 
+stud.category,
+stud.offer_id,
+stud.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+stud.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join stud_offers stud 
+    on stud.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path in (  'best/credit-cards/college-student',
+                            'm/credit-cards/excellent-student-credit-cards',
+                             'the-best-credit-cards/college-student'
+                            )
+ or fa.impression_section in (
+                            'student_credit_cards_l3_page',
+                            'student_credit_cards_l2_page',
+                            'native_market_see_details'
+                                )
+ or dv.pageview_url_path ilike '%reviews/credit-cards%' 
+ or dv.pageview_url_path ilike '%pers-rec-results%')
+--and trav.offer_id is not null
+group by stud.category,stud.offer_id,stud.offer_name,stud.institution_id,device)
+
+union all --business
+
+(select 
+biz.category,
+biz.offer_id,
+biz.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+biz.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join biz_offers biz 
+    on biz.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+--and trav.offer_id is not null
+group by biz.category,biz.offer_id,biz.offer_name,biz.institution_id,device)
+
+union all --airline 
+
+(select 
+airline.category,
+airline.offer_id,
+airline.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+airline.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join airline_offers airline 
+    on airline.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path in (  'best/credit-cards/airline',
+                            'best/credit-cards/delta-airlines-cards',
+                            'best/credit-cards/united-airlines-cards',
+                            'best/credit-cards/american-airlines-cards',
+                            'm/credit-cards/excellent-airline-credit-cards',
+                            'the-best-credit-cards/airline'
+                            
+                            ) 
+ or dv.pageview_url_path ilike '%reviews/credit-cards%' 
+ or dv.pageview_url_path ilike '%pers-rec-results%')
+--and trav.offer_id is not null
+group by airline.category,airline.offer_id,airline.offer_name,airline.institution_id,device)
+
+
+union all --best offers
+
+(select 
+best.category,
+best.offer_id,
+best.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+best.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join best_offers best 
+    on best.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path ilike '/the-best-credit-cards%'
+ /*or fa.impression_section in (
+                                'best_of_month_credit_cards_l3_page',
+                                'best_of_month_credit_cards_l2_page',
+                                'native_market_see_details'
+                                )*/
+                                )
+--and trav.offer_id is not null
+group by best.category,best.offer_id,best.offer_name,best.institution_id,device)
+
+union all --fair credit 
+
+(select 
+fair.category,
+fair.offer_id,
+fair.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+fair.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join fair_offers fair 
+    on fair.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path in (  'best/credit-cards/fair-credit',
+                            'best/credit-cards/building-credit',
+                            'best/credit-cards/no-credit'
+                            )
+ or fa.impression_section in (
+                            'fair_credit_credit_cards_l2_page',
+                            'fair_credit_credit_cards_l3_page',
+                            'native_market_see_details'
+                                )
+ or dv.pageview_url_path ilike '%reviews/credit-cards%' 
+ or dv.pageview_url_path ilike '%pers-rec-results%')
+--and trav.offer_id is not null
+group by fair.category,fair.offer_id,fair.offer_name,fair.institution_id,device)
+
+union all --no foreign transaction fee
+
+(select 
+nftf.category,
+nftf.offer_id,
+nftf.institution_id,
+dv.device_platform device,
+coalesce(count(distinct fa.sku_impression_id),0) product_impressions, 
+coalesce(sum(coalesce(cpa.cpa,fa3.revenue_ingested)),0) revenue,
+nftf.offer_name
+from nexus.prod.f_pageview dv 
+join nexus.prod.f_sku_impression fa 
+    on fa.impression_pageview_id = dv.pageview_id
+    and fa.monetizable = 'yes_assumed'
+right join nftf_offers nftf 
+    on nftf.offer_id = fa.sku_id
+left join nexus.prod.f_shopping_finish fa2
+    on fa2.sku_impression_id = fa.sku_impression_id 
+left join nexus.prod.f_affiliate_transaction fa3
+    on fa3.shopping_finish_id = fa2.shopping_finish_id
+    and fa3.revenue_ingested > 0
+left join cpas cpa 
+    on cpa.marketplace_id = fa3.sku_id
+where dv.pageview_dt between dateadd(day,-14,current_date) and dateadd(day,-7,current_date)
+and 
+(dv.pageview_url_path in (  'best/credit-cards/no-foreign-transaction-fee',
+                            
+                            'm/credit-cards/excellent-no-foreign-transaction-fee-credit-cards',
+                            '/the-best-credit-cards/no-foreign-transaction-fee'
+                            ) 
+ or dv.pageview_url_path ilike '%reviews/credit-cards%' 
+ or dv.pageview_url_path ilike '%pers-rec-results%')
+--and trav.offer_id is not null
+group by nftf.category,nftf.offer_id,nftf.offer_name,nftf.institution_id,device))
+),
+final_data as
+    (
+    select 
+    rd.category,
+    rd.marketplace_id,
+    rd.offer_name,
+    coalesce(sum(case when device in ('mobile web','mobile native') then revenue end) / nullifzero(sum(case when device in ('mobile web','mobile native') then product_impressions end)),0) native_arpi,
+    row_number() over (partition by category order by native_arpi desc) native_rank
+    from revenue_data rd
+    group by 1,2,3
+    )
+select  
+f.category,
+'desktop' as device_type,
+f.marketplace_id,
+f.native_rank,
+f.offer_name
+from final_data f
+order by f.category,f.native_rank
+
+
+
