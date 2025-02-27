@@ -808,7 +808,7 @@ final_data as
     )
 select  
 f.category,
-'desktop' as device_type,
+'mobile' as device_type,
 f.marketplace_id,
 f.native_rank,
 f.offer_name
