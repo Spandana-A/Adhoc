@@ -1,0 +1,32 @@
+ALTER SESSION SET WEEK_START = 7;
+
+with sessions as (
+select distinct PAGEVIEW_DT as DW_EFF_DT
+, SESSION_ID
+from nexus.prod.f_pageview
+where deployable_name = 'cardfinder'
+--and PAGEVIEW_DT >= '2023-09-04'
+and PAGEVIEW_DT >= '2025-01-22'
+and PAGEVIEW_DT < date_trunc('WEEK', current_date)
+and SUPPLEMENTARY:CONTEXT_PAGE_SEARCH::STRING <> '?trk_location=cc_super_bowl' 
+
+)
+
+,registrations as (
+select distinct REGISTRATION_DT
+, SESSION_ID
+from NEXUS.PROD.F_REGISTRATION
+where DEPLOYABLE_NAME = 'cardfinder'
+--and REGISTRATION_DT >= '2023-09-04'
+and REGISTRATION_DT >= '2025-01-22'
+and REGISTRATION_DT < date_trunc('WEEK', current_date)
+)
+
+select date_trunc('WEEK', coalesce(s.DW_EFF_DT, r.REGISTRATION_DT)) as week_of
+, count(distinct s.SESSION_ID) as sessions
+, count(distinct r.session_id) as registrations
+, registrations/sessions as registration_rate
+from sessions s
+left join registrations r
+on s.SESSION_ID = r.session_id
+group by 1 order by 1;
