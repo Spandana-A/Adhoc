@@ -1,0 +1,30 @@
+ALTER SESSION SET WEEK_START = 7;
+
+with sessions as (
+  SELECT distinct f.PAGEVIEW_DT as dw_eff_dt
+  , SESSION_ID
+  from NEXUS.PROD.F_PAGEVIEW  f 
+  where f.DEPLOYABLE_NAME = 'cardalyzer'
+  and f.PAGEVIEW_DT >= '2023-09-04'
+  and f.PAGEVIEW_DT < date_trunc('WEEK',current_date)
+
+)
+
+, registrations as (
+    
+    SELECT distinct r.REGISTRATION_DT 
+    , r.SESSION_ID 
+    FROM NEXUS.PROD.F_REGISTRATION r 
+    where r.DEPLOYABLE_NAME = 'cardalyzer'
+    and r.REGISTRATION_DT >= '2023-09-04'
+    and r.REGISTRATION_DT < date_trunc('WEEK',current_date)
+    
+)
+select date_trunc('WEEK', coalesce(s.DW_EFF_DT, r.REGISTRATION_DT)) as week_of
+ , count(distinct s.SESSION_ID) as sessions
+, count(distinct r.session_id) as registrations
+, registrations/sessions as registration_rate
+from sessions s
+full outer join registrations r
+on s.SESSION_ID = r.session_id
+group by 1 order by 1;
