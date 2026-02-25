@@ -1,0 +1,185 @@
+SET (start_time, end_time)= ('2025-06-05', '2025-12-07' );
+
+WITH sessions AS (
+    SELECT DISTINCT 
+        fp.SESSION_ID
+       ,fp.pageview_id
+       ,fp.monetize_in
+       ,fp.PAGEVIEW_DT
+       ,TRIM(SPLIT_PART(fp.PAGEVIEW_URL_PATH, '/', -1)) AS PAGE_PATH
+       ,ds.TRAFFIC_CHANNEL
+       ,CASE 
+            WHEN ds.DEVICE_TYPE ILIKE '%tablet%' THEN 'mobile'
+            ELSE ds.DEVICE_TYPE 
+        END AS device_type
+       ,eng_sess.is_engaged_session
+    FROM  NEXUS.PROD.F_PAGEVIEW fp
+    INNER JOIN NEXUS.PROD.D_SESSION ds
+        ON fp.session_id = ds.session_id
+       AND ds.session_start_dt BETWEEN $start_time AND $end_time
+    LEFT JOIN SEO_MART.PROD.SESSIONS_AND_PAGEVIEWS_TRANSACTION_ENRICHED eng_sess 
+        ON ds.session_id = eng_sess.session_id
+    WHERE fp.PAGEVIEW_URL_PATH <> '/'
+      AND (
+            fp.pageview_url_path ILIKE '/the-best-credit-cards'
+         OR fp.pageview_url_path ILIKE '/credit-cards/best'
+         OR fp.pageview_url_path IN (
+              '/best/credit-cards/travel',
+              '/credit-cards/best/travel',
+              '/best/credit-cards/balance-transfer',
+              '/credit-cards/best/balance-transfer',
+              '/best/credit-cards/cash-back',
+              '/credit-cards/best/cash-back',
+              '/best/credit-cards/bonus-offers',
+              '/credit-cards/best/bonus-offers',
+              '/best/credit-cards/college-student',
+              '/credit-cards/best/college-student',
+              '/best/credit-cards/secured',
+              '/credit-cards/best/secured',
+              '/best/credit-cards/excellent-credit',
+              '/credit-cards/best/excellent-credit',
+              '/best/credit-cards/good-credit',
+              '/credit-cards/best/good-credit',
+              '/best/credit-cards/fair-credit',
+              '/credit-cards/best/fair-credit',
+              '/best/credit-cards/bad-credit',
+              '/credit-cards/best/bad-credit',
+              '/best/credit-cards/no-credit',
+              '/credit-cards/best/no-credit',
+              '/best/credit-cards/airline',
+              '/credit-cards/best/airline',
+              '/best/credit-cards/hotel',
+              '/credit-cards/best/hotel',
+              '/best/credit-cards/no-foreign-transaction-fee',
+              '/credit-cards/best/no-foreign-transaction-fee',
+              '/best/credit-cards/airport-lounge-access',
+              '/credit-cards/best/airport-lounge-access',
+              '/best/credit-cards/rewards',
+              '/credit-cards/best/rewards',
+              '/best/credit-cards/gas',
+              '/credit-cards/best/gas',
+              '/best/credit-cards/groceries',
+              '/credit-cards/best/groceries',
+              '/best/credit-cards/restaurants',
+              '/credit-cards/best/restaurants',
+              '/best/credit-cards/online-shopping',
+              '/credit-cards/best/online-shopping',
+              '/best/credit-cards/streaming-services',
+              '/credit-cards/best/streaming-services',
+              '/best/credit-cards/low-interest',
+              '/credit-cards/best/low-interest',
+              '/best/credit-cards/no-annual-fee',
+              '/credit-cards/best/no-annual-fee',
+              '/best/credit-cards/zero-percent',
+              '/credit-cards/best/zero-percent',
+              '/best/credit-cards/small-business',
+              '/business/credit-cards/best'
+          )
+      )
+      AND fp.PAGEVIEW_DT BETWEEN $start_time AND $end_time
+),
+page_actions_bcc AS (
+    SELECT 
+        a.IMPRESSION_PAGEVIEW_ID AS sub_nav_interacted_pv_id,
+        b.SESSION_ID            AS sub_nav_interacted_sess_id,
+        a.ADDITIONAL_ATTRIBUTES_SUB_NAV_SECTION,
+        a.IMPRESSION_POSITION,
+        fv.ENTITY_SECTION,
+        TRIM(SPLIT_PART(a.CONTEXT_PAGE_PATH, '/', -1)) AS FROM_PAGE_PATH,
+        TRIM(SPLIT_PART(
+                REPLACE(a.TARGET_PAGE_URL, 'https://www.nerdwallet.com', ''),
+                '/',
+                -1
+        )) AS TO_PAGE_PATH 
+    FROM SHIBUYA_LANDZONE.CC_SHOPPING_CLIENT_PROD.PAGE_ACTION a
+    INNER JOIN CARDS_MART.PROD.PAGE_ACTION b 
+        ON a.IMPRESSION_PAGEVIEW_ID = b.IMPRESSION_PAGEVIEW_ID
+       AND b.action_name = 'sub_nav_interaction'
+       AND b.action_section = 'cc_sub_nav'
+    INNER JOIN SHIBUYA_LANDZONE.CC_SHOPPING_CLIENT_PROD.FEATURE_VIEWED fv
+        ON a.PARENT_ACTIVITY_ID = fv.activity_id
+    WHERE a.action_name   = 'sub_nav_interaction'
+      AND a.action_section = 'cc_sub_nav'
+),
+raw AS (
+    SELECT 
+        e.*,
+        pa.*,
+        dm.institution_nm AS affiliate_partner_nm,
+        b.SHOPPING_FINISH_ID AS mclick_id,
+        app.shopping_finish_id AS app_id,
+        d.TRANSACTION_ID AS txn_id,
+        d.REVENUE_INGESTED AS txn_revenue
+    FROM sessions e
+    LEFT JOIN page_actions_bcc pa
+        ON e.pageview_id = pa.sub_nav_interacted_pv_id
+    LEFT JOIN NEXUS.PROD.F_SHOPPING_FINISH b
+        ON e.SESSION_ID = b.SESSION_ID
+       AND b.impression_page_url NOT ILIKE '%/m/%'
+       AND b.impression_section <> 'summary'
+       AND b.MONETIZABLE = 'yes_assumed'
+       AND b.SKU_PRODUCT_TYPE = 'credit_cards'
+       AND CONVERT_TIMEZONE('UTC', 'America/Los_Angeles', b.shopping_finish_ts) 
+           BETWEEN $start_time AND $end_time 
+    LEFT JOIN NEXUS.PROD.D_MARKETPLACE dm
+        ON b.sku_id = dm.offer_id
+       AND dm.curr_in = TRUE
+    LEFT JOIN CARDS_MART.PROD.SHOPPING_FINISH_APPLICATION_PIPELINE app 
+        ON b.shopping_finish_id = app.shopping_finish_id
+       AND app.f_application_in = 1
+    LEFT JOIN NEXUS.PROD.F_AFFILIATE_TRANSACTION d
+        ON b.SHOPPING_FINISH_ID = d.SHOPPING_FINISH_ID
+       AND d.REVENUE_INGESTED > 0
+),
+monthly_subnav AS (
+    SELECT
+        DATE_TRUNC('month', PAGEVIEW_DT)::DATE AS month,
+        device_type,
+        ENTITY_SECTION,
+        ADDITIONAL_ATTRIBUTES_SUB_NAV_SECTION,
+        IMPRESSION_POSITION,
+        -- numerator: pageviews that had a subnav interaction at this granularity
+        COUNT(DISTINCT CASE 
+            WHEN sub_nav_interacted_pv_id IS NOT NULL THEN pageview_id 
+        END) AS interacted_pageviews
+    FROM raw
+    GROUP BY
+        DATE_TRUNC('month', PAGEVIEW_DT)::DATE,
+        device_type,
+        ENTITY_SECTION,
+        ADDITIONAL_ATTRIBUTES_SUB_NAV_SECTION,
+        IMPRESSION_POSITION
+),
+monthly_denominator AS (
+    SELECT
+        DATE_TRUNC('month', PAGEVIEW_DT)::DATE AS month,
+        device_type,
+        COUNT(DISTINCT pageview_id) AS total_pageviews_month_device
+    FROM raw
+    GROUP BY
+        DATE_TRUNC('month', PAGEVIEW_DT)::DATE,
+        device_type
+)
+SELECT
+    ms.month,
+    ms.device_type,
+    ms.ENTITY_SECTION,
+    ms.ADDITIONAL_ATTRIBUTES_SUB_NAV_SECTION,
+    ms.IMPRESSION_POSITION,
+    ms.interacted_pageviews,
+    md.total_pageviews_month_device,
+    CASE 
+        WHEN md.total_pageviews_month_device > 0 THEN
+            ms.interacted_pageviews * 1.0 / md.total_pageviews_month_device
+    END AS subnav_interaction_rate
+FROM monthly_subnav ms
+JOIN monthly_denominator md
+    ON ms.month = md.month
+   AND ms.device_type = md.device_type
+WHERE ms.interacted_pageviews > 0
+ORDER BY
+    ms.month,
+    ms.device_type,
+    ms.ENTITY_SECTION,
+    ms.ADDITIONAL_ATTRIBUTES_SUB_NAV_SECTION,
+    ms.IMPRESSION_POSITION;
