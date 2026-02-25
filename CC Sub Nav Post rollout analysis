@@ -1,0 +1,126 @@
+SET (start_time, end_time)= ('2025-06-05', '2025-12-07' );
+
+
+With sessions as (
+select distinct 
+fp.SESSION_ID
+        ,fp.pageview_id
+         ,fp.monetize_in
+      , fp.PAGEVIEW_DT
+      , trim(SPLIT_PART(fp.PAGEVIEW_URL_PATH, '/', -1)) PAGE_PATH
+      ,ds.TRAFFIC_CHANNEL
+      , case when ds.DEVICE_TYPE ilike '%tablet%' then 'mobile'
+      else ds.DEVICE_TYPE end as device_type
+      , eng_sess.is_engaged_session
+    from  NEXUS.PROD.F_PAGEVIEW fp
+      inner join nexus.prod.D_SESSION ds
+      on fp.session_id = ds.session_id
+      and ds.session_start_dt between $start_time and $end_time
+      left join SEO_MART.PROD.SESSIONS_AND_PAGEVIEWS_TRANSACTION_ENRICHED eng_sess 
+      on ds.session_id = eng_sess.session_id
+      where fp.PAGEVIEW_URL_PATH != '/'
+      and (fp.pageview_url_path ilike '/the-best-credit-cards'
+      or fp.pageview_url_path ilike '/credit-cards/best'
+      or fp.pageview_url_path in 
+          ('/best/credit-cards/travel',
+          '/credit-cards/best/travel',
+          '/best/credit-cards/balance-transfer',
+          '/credit-cards/best/balance-transfer',
+          '/best/credit-cards/cash-back',
+          '/credit-cards/best/cash-back',
+          '/best/credit-cards/bonus-offers',
+          '/credit-cards/best/bonus-offers',
+          '/best/credit-cards/college-student',
+          '/credit-cards/best/college-student',
+          '/best/credit-cards/secured',
+          '/credit-cards/best/secured',
+          '/best/credit-cards/excellent-credit',
+          '/credit-cards/best/excellent-credit',
+          '/best/credit-cards/good-credit',
+          '/credit-cards/best/good-credit',
+          '/best/credit-cards/fair-credit',
+          '/credit-cards/best/fair-credit',
+          '/best/credit-cards/bad-credit',
+          '/credit-cards/best/bad-credit',
+          '/best/credit-cards/no-credit',
+          '/credit-cards/best/no-credit',
+          '/best/credit-cards/airline',
+          '/credit-cards/best/airline',
+          '/best/credit-cards/hotel',
+          '/credit-cards/best/hotel',
+          '/best/credit-cards/no-foreign-transaction-fee',
+          '/credit-cards/best/no-foreign-transaction-fee',
+          '/best/credit-cards/airport-lounge-access',
+          '/credit-cards/best/airport-lounge-access',
+          '/best/credit-cards/rewards',
+          '/credit-cards/best/rewards',
+          '/best/credit-cards/gas',
+          '/credit-cards/best/gas',
+          '/best/credit-cards/groceries',
+          '/credit-cards/best/groceries',
+          '/best/credit-cards/restaurants',
+          '/credit-cards/best/restaurants',
+          '/best/credit-cards/online-shopping',
+          '/credit-cards/best/online-shopping',
+          '/best/credit-cards/streaming-services',
+          '/credit-cards/best/streaming-services',
+          '/best/credit-cards/low-interest',
+          '/credit-cards/best/low-interest',
+          '/best/credit-cards/no-annual-fee',
+          '/credit-cards/best/no-annual-fee',
+          '/best/credit-cards/zero-percent',
+          '/credit-cards/best/zero-percent',
+          '/best/credit-cards/small-business',
+          '/business/credit-cards/best'
+          ))
+and fp.PAGEVIEW_DT between $start_time and $end_time
+)
+ ,page_actions_bcc as (
+      select 
+      a.IMPRESSION_PAGEVIEW_ID sub_nav_interacted_pv_id,
+      b.SESSION_ID sub_nav_interacted_sess_id,
+      a.ADDITIONAL_ATTRIBUTES_SUB_NAV_SECTION,
+      a.IMPRESSION_POSITION,
+      fv.ENTITY_SECTION,
+      trim(SPLIT_PART(a.CONTEXT_PAGE_PATH, '/', -1)) FROM_PAGE_PATH,
+      trim(SPLIT_PART(REPLACE(a.TARGET_PAGE_URL, 'https://www.nerdwallet.com', ''),'/',-1)) TO_PAGE_PATH 
+      from SHIBUYA_LANDZONE.CC_SHOPPING_CLIENT_PROD.PAGE_ACTION a
+      inner join CARDS_MART.PROD.PAGE_ACTION b 
+      on a.IMPRESSION_PAGEVIEW_ID = b.IMPRESSION_PAGEVIEW_ID
+      and b.action_name = 'sub_nav_interaction'
+      and b.action_section = 'cc_sub_nav'
+      inner join SHIBUYA_LANDZONE.CC_SHOPPING_CLIENT_PROD.FEATURE_VIEWED fv
+      on a.PARENT_ACTIVITY_ID = fv.activity_id
+      where a.action_name = 'sub_nav_interaction'
+      and a.action_section = 'cc_sub_nav'
+      )
+--,raw as (
+select e.*, pa.*,
+dm.institution_nm as affiliate_partner_nm
+      , b.SHOPPING_FINISH_ID as mclick_id
+      , app.shopping_finish_id as app_id
+      , d.TRANSACTION_ID as txn_id
+      , d.REVENUE_INGESTED as txn_revenue
+from sessions e
+left join page_actions_bcc pa
+  on e.pageview_id = pa.sub_nav_interacted_pv_id
+   left join NEXUS.PROD.F_SHOPPING_FINISH b
+      on e.SESSION_ID = b.SESSION_ID
+      and b.impression_page_url not ilike '%/m/%'
+      and b.impression_section <> 'summary'
+      and b.MONETIZABLE = 'yes_assumed'
+      and b.SKU_PRODUCT_TYPE = 'credit_cards'
+      and convert_timezone('UTC', 'America/Los_Angeles', b.shopping_finish_ts)  between $start_time and $end_time 
+      left join nexus.prod.d_marketplace dm
+      on b.sku_id = dm.offer_id
+      and dm.curr_in = TRUE
+      left join CARDS_MART.PROD.SHOPPING_FINISH_APPLICATION_PIPELINE app 
+      on b.shopping_finish_id = app.shopping_finish_id
+      and app.f_application_in = 1
+      left join nexus.prod.F_AFFILIATE_TRANSACTION d
+      on b.SHOPPING_FINISH_ID = d.SHOPPING_FINISH_ID
+      and d.REVENUE_INGESTED >0
+
+
+  
+  
