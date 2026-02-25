@@ -1,0 +1,487 @@
+--- Impact on ARPS
+
+-- Step 1: Aggregate metrics by page and period
+WITH base_data AS (
+  SELECT
+    CASE when PAGEVIEW_URL_PATH ilike '%the-best-credit-cards%' then '/the-best-credit-cards' else PAGEVIEW_URL_PATH end as pageview_url_path,
+    CASE 
+      WHEN DW_EFF_DT BETWEEN '{{ compare_start }}' AND '{{ compare_end }}' THEN 'compare'
+      WHEN DW_EFF_DT BETWEEN '{{ primary_start }}' AND '{{ primary_end }}' THEN 'primary'
+    END AS period,
+    SUM(SESSIONS_CT) AS sessions,
+    SUM(M_PAGEVIEWS_CT) AS mpageviews,
+    SUM(M_CLICKS_CT) AS mclicks,
+    sum(APPLICATION_CT) AS applications,
+    SUM(CLICK_DT_TRANSACTIONS_CT) AS transactions,
+    sum(CLICK_DT_REVENUE_AM) AS revenue
+  FROM CORP_MART.PROD.CORPORATE_METRICS_AGG_EXTENDED
+ WHERE (
+    (DW_EFF_DT BETWEEN '{{ compare_start }}' AND '{{ compare_end }}')
+ OR (DW_EFF_DT BETWEEN '{{ primary_start }}' AND '{{ primary_end }}')
+)
+AND PAGEVIEW_URL_PATH is not null
+and (PAGEVIEW_URL_PATH ilike '/the-best-credit-cards%' 
+or PAGEVIEW_URL_PATH ilike '/best/credit-cards/%'
+or PAGEVIEW_URL_PATH ilike '/article/credit-cards/%'
+or PAGEVIEW_URL_PATH ilike '/article/travel/%'
+or PAGEVIEW_URL_PATH ilike '/reviews/credit-cards/%'
+or PAGEVIEW_URL_PATH ilike '/compare/credit-cards%'
+or PAGEVIEW_URL_PATH ilike '/credit-cards/best%' 
+or PAGEVIEW_URL_PATH ilike '/credit-cards/reviews%'
+or PAGEVIEW_URL_PATH ilike '/credit-cards/compare%'
+)
+and pageview_url_path not ilike '%small-business%'
+
+
+AND VERTICAL = 'Credit Cards'
+  GROUP BY 1, 2
+),
+-- Step 2: Compute derived metrics
+metrics AS (
+  SELECT
+    PAGEVIEW_URL_PATH,
+    period,
+    revenue,
+    sessions,
+    revenue / NULLIF(transactions, 0) AS arpt,
+    mclicks / NULLIF(mpageviews, 0) AS mcmpv,
+    applications / NULLIF(mclicks, 0) AS app_rate,
+    transactions / NULLIF(applications, 0) AS approval_rate,
+    mpageviews / NULLIF(sessions, 0) AS mpv_per_session,
+    revenue / NULLIF(sessions, 0) AS arps
+  FROM base_data
+),
+
+-- Step 3: Pivot into wide format
+pivoted AS (
+  SELECT
+    PAGEVIEW_URL_PATH,
+
+    -- Primary
+    MAX(CASE WHEN period = 'primary' THEN revenue END) AS revenue_primary,
+    MAX(CASE WHEN period = 'primary' THEN sessions END) AS sessions_primary,
+    MAX(CASE WHEN period = 'primary' THEN arpt END) AS arpt_primary,
+    MAX(CASE WHEN period = 'primary' THEN mcmpv END) AS mcmpv_primary,
+    MAX(CASE WHEN period = 'primary' THEN app_rate END) AS app_rate_primary,
+    MAX(CASE WHEN period = 'primary' THEN approval_rate END) AS approval_rate_primary,
+    MAX(CASE WHEN period = 'primary' THEN mpv_per_session END) AS mpv_sess_primary,
+    MAX(CASE WHEN period = 'primary' THEN arps END) AS arps_primary,
+
+    -- Compare
+    MAX(CASE WHEN period = 'compare' THEN revenue END) AS revenue_compare,
+    MAX(CASE WHEN period = 'comapre' THEN sessions END) AS sessions_compare,
+    MAX(CASE WHEN period = 'compare' THEN arpt END) AS arpt_compare,
+    MAX(CASE WHEN period = 'compare' THEN mcmpv END) AS mcmpv_compare,
+    MAX(CASE WHEN period = 'compare' THEN app_rate END) AS app_rate_compare,
+    MAX(CASE WHEN period = 'compare' THEN approval_rate END) AS approval_rate_compare,
+    MAX(CASE WHEN period = 'compare' THEN mpv_per_session END) AS mpv_sess_compare,
+    MAX(CASE WHEN period = 'compare' THEN arps END) AS arps_compare
+  FROM metrics
+  GROUP BY PAGEVIEW_URL_PATH
+),
+
+-- Step 4: Simulate counterfactuals (chained decomposition)
+decomposed AS (
+  SELECT *,
+    -- Hybrid 1: ARPT changes only
+    arpt_compare * mcmpv_primary * app_rate_primary * approval_rate_primary * mpv_sess_primary AS arps_if_only_arpt_changed,
+
+    -- Hybrid 2: + CTR
+    arpt_compare * mcmpv_compare * app_rate_primary * approval_rate_primary * mpv_sess_primary AS arps_if_mcmpv_changed,
+
+    -- Hybrid 3: + App Rate
+    arpt_compare * mcmpv_compare * app_rate_compare * approval_rate_primary * mpv_sess_primary AS arps_if_app_rate_changed,
+
+    -- Hybrid 4: + Approval Rate
+    arpt_compare * mcmpv_compare * app_rate_compare * approval_rate_compare * mpv_sess_primary AS arps_if_approval_changed,
+
+    -- Hybrid 5: + mPV/Session
+    arpt_compare * mcmpv_compare * app_rate_compare * approval_rate_compare * mpv_sess_compare AS recomputed_arps_compare
+  FROM pivoted
+)
+
+
+
+-- Final output: Attribution
+SELECT
+  PAGEVIEW_URL_PATH,
+  ROUND(revenue_primary, 2) AS revenue_primary,
+  ROUND(revenue_compare, 2) AS revenue_compare,
+  ROUND(sessions_primary, 2) AS sessions_primary,
+  ROUND(sessions_compare, 2) AS sessions_compare,
+
+  ROUND(arps_primary, 2) AS arps_primary,
+  ROUND(arps_compare, 2) AS arps_compare,
+
+  ROUND(arps_primary - arps_if_only_arpt_changed, 2) AS impact_arpt,
+  ROUND(arps_if_only_arpt_changed - arps_if_mcmpv_changed, 2) AS impact_mcmpv,
+  ROUND(arps_if_mcmpv_changed - arps_if_app_rate_changed, 2) AS impact_app_rate,
+  ROUND(arps_if_app_rate_changed - arps_if_approval_changed, 2) AS impact_approval_rate,
+  ROUND(arps_if_approval_changed - arps_compare, 2) AS impact_mpv_sess,
+
+  ROUND(arps_primary - arps_compare, 2) AS total_arps_change,
+  ROUND(recomputed_arps_compare, 4) AS recomputed_arps_compare_check,
+ROUND(arps_compare, 4) AS arps_compare_check,
+ROUND(recomputed_arps_compare - arps_compare, 4) AS compare_arps_delta_check
+FROM decomposed
+ORDER BY total_arps_change DESC
+
+{% form %}
+
+primary_start:
+  type: date
+  name: "Primary Start Date"
+  default: 2025-07-01
+
+primary_end:
+  type: date
+  name: "Primary End Date"
+  default: 2025-09-30
+
+compare_start:
+  type: date
+  name: "Compare Start Date"
+  default: 2025-03-01
+
+compare_end:
+  type: date
+  name: "Compare End Date"
+  default: 2025-06-30
+
+PAGEVIEW_URL_PATH:
+  type: multiselect
+  name: "Page URL"
+  from: query
+  query: page_filter_options
+  column: PAGEVIEW_URL_PATH
+  default: /the-best-credit-cards
+
+
+{% endform %}
+
+---Impact by page type
+
+-- Step 1: Aggregate metrics by page and period
+WITH base_data AS (
+  SELECT
+    CASE when (PAGEVIEW_URL_PATH ilike '%the-best-credit-cards%' or  PAGEVIEW_URL_PATH ilike '/best/credit-cards/%' or PAGEVIEW_URL_PATH ilike '/credit-cards/best%') then 'Roundups'
+    when PAGEVIEW_URL_PATH ilike '/article/credit-cards/%' then 'Credit Card Articles'
+    when PAGEVIEW_URL_PATH ilike '/article/travel/%' then 'Travel Articles'
+    when (PAGEVIEW_URL_PATH ilike '/reviews/credit-cards/%' or PAGEVIEW_URL_PATH ilike '/credit-cards/reviews/%') then 'Reviews'
+    when (PAGEVIEW_URL_PATH ilike '/compare/credit-cards%' or PAGEVIEW_URL_PATH ilike '/credit-cards/compare%') then 'Compare Page'
+    else 'Other' end as page_type,
+    CASE 
+      WHEN DW_EFF_DT BETWEEN '{{ compare_start }}' AND '{{ compare_end }}' THEN 'compare'
+      WHEN DW_EFF_DT BETWEEN '{{ primary_start }}' AND '{{ primary_end }}' THEN 'primary'
+    END AS period,
+    SUM(SESSIONS_CT) AS sessions,
+    SUM(M_PAGEVIEWS_CT) AS mpageviews,
+    SUM(M_CLICKS_CT) AS mclicks,
+    sum(APPLICATION_CT) AS applications,
+    SUM(CLICK_DT_TRANSACTIONS_CT) AS transactions,
+    sum(CLICK_DT_REVENUE_AM) AS revenue
+  FROM CORP_MART.PROD.CORPORATE_METRICS_AGG_EXTENDED
+ WHERE (
+    (DW_EFF_DT BETWEEN '{{ compare_start }}' AND '{{ compare_end }}')
+ OR (DW_EFF_DT BETWEEN '{{ primary_start }}' AND '{{ primary_end }}')
+)
+AND PAGEVIEW_URL_PATH is not null
+and (PAGEVIEW_URL_PATH ilike '/the-best-credit-cards%' 
+or PAGEVIEW_URL_PATH ilike '/best/credit-cards/%'
+or PAGEVIEW_URL_PATH ilike '/article/credit-cards/%'
+or PAGEVIEW_URL_PATH ilike '/article/travel/%'
+or PAGEVIEW_URL_PATH ilike '/reviews/credit-cards/%'
+or PAGEVIEW_URL_PATH ilike '/compare/credit-cards%'
+or PAGEVIEW_URL_PATH ilike '/credit-cards/best%' 
+or PAGEVIEW_URL_PATH ilike '/credit-cards/reviews%'
+or PAGEVIEW_URL_PATH ilike '/credit-cards/compare%'
+)
+and pageview_url_path not ilike '%small-business%'
+
+AND VERTICAL = 'Credit Cards'
+  GROUP BY 1, 2
+),
+-- Step 2: Compute derived metrics
+metrics AS (
+  SELECT
+    page_type,
+    period,
+    revenue,
+    revenue / NULLIF(transactions, 0) AS arpt,
+    mclicks / NULLIF(mpageviews, 0) AS mcmpv,
+    applications / NULLIF(mclicks, 0) AS app_rate,
+    transactions / NULLIF(applications, 0) AS approval_rate,
+    mpageviews / NULLIF(sessions, 0) AS mpv_per_session,
+    revenue / NULLIF(sessions, 0) AS arps
+  FROM base_data
+),
+
+-- Step 3: Pivot into wide format
+pivoted AS (
+  SELECT
+    page_type,
+
+    -- Primary
+    MAX(CASE WHEN period = 'primary' THEN revenue END) AS revenue_primary,
+    MAX(CASE WHEN period = 'primary' THEN arpt END) AS arpt_primary,
+    MAX(CASE WHEN period = 'primary' THEN mcmpv END) AS mcmpv_primary,
+    MAX(CASE WHEN period = 'primary' THEN app_rate END) AS app_rate_primary,
+    MAX(CASE WHEN period = 'primary' THEN approval_rate END) AS approval_rate_primary,
+    MAX(CASE WHEN period = 'primary' THEN mpv_per_session END) AS mpv_sess_primary,
+    MAX(CASE WHEN period = 'primary' THEN arps END) AS arps_primary,
+
+    -- Compare
+    MAX(CASE WHEN period = 'compare' THEN revenue END) AS revenue_compare,
+    MAX(CASE WHEN period = 'compare' THEN arpt END) AS arpt_compare,
+    MAX(CASE WHEN period = 'compare' THEN mcmpv END) AS mcmpv_compare,
+    MAX(CASE WHEN period = 'compare' THEN app_rate END) AS app_rate_compare,
+    MAX(CASE WHEN period = 'compare' THEN approval_rate END) AS approval_rate_compare,
+    MAX(CASE WHEN period = 'compare' THEN mpv_per_session END) AS mpv_sess_compare,
+    MAX(CASE WHEN period = 'compare' THEN arps END) AS arps_compare
+  FROM metrics
+  GROUP BY page_type
+),
+
+-- Step 4: Simulate counterfactuals (chained decomposition)
+-- Step 4: Decomposition chain
+ decomposed AS (
+  SELECT *,
+    -- Hybrid stages
+    arpt_compare * mcmpv_primary * app_rate_primary * approval_rate_primary * mpv_sess_primary AS arps_if_only_arpt_changed,
+    arpt_compare * mcmpv_compare * app_rate_primary * approval_rate_primary * mpv_sess_primary AS arps_if_mcmpv_changed,
+    arpt_compare * mcmpv_compare * app_rate_compare * approval_rate_primary * mpv_sess_primary AS arps_if_app_rate_changed,
+    arpt_compare * mcmpv_compare * app_rate_compare * approval_rate_compare * mpv_sess_primary AS arps_if_approval_changed,
+    arpt_compare * mcmpv_compare * app_rate_compare * approval_rate_compare * mpv_sess_compare AS recomputed_arps_compare,
+
+    -- Impacts in bottom-up direction (to match first query)
+    (arps_primary - arps_if_only_arpt_changed) AS impact_arpt,
+    (arps_if_only_arpt_changed - arps_if_mcmpv_changed) AS impact_mcmpv,
+    (arps_if_mcmpv_changed - arps_if_app_rate_changed) AS impact_app_rate,
+    (arps_if_app_rate_changed - arps_if_approval_changed) AS impact_approval_rate,
+    (arps_if_approval_changed - arps_compare) AS impact_mpv_sess
+
+  FROM pivoted
+)
+
+
+-- Step 5: Waterfall chart output
+SELECT 
+  page_type,
+  step_order,
+  step,
+  value
+FROM (
+  SELECT page_type, 1 AS step_order, 'ARPS_COMPARE' as step, arps_compare as value FROM decomposed
+  UNION ALL
+  SELECT page_type, 2, '+ MPV/Session', impact_mpv_sess FROM decomposed
+  UNION ALL
+  SELECT page_type, 5, '+ Approval Rate', impact_approval_rate FROM decomposed
+  UNION ALL
+  SELECT page_type, 4, '+ App Rate', impact_app_rate FROM decomposed
+  UNION ALL
+  SELECT page_type, 3, '+ mClick/mPV', impact_mcmpv FROM decomposed
+  UNION ALL
+  SELECT page_type, 6, '+ ARPT', impact_arpt FROM decomposed
+  UNION ALL
+  SELECT page_type, 7, '= ARPS_PRIMARY', arps_primary FROM decomposed
+) steps
+ORDER BY page_type, step_order
+
+{% form %}
+
+primary_start:
+  type: date
+  name: "Primary Start Date"
+  default: 2025-07-01
+
+primary_end:
+  type: date
+  name: "Primary End Date"
+  default: 2025-09-30
+
+compare_start:
+  type: date
+  name: "Compare Start Date"
+  default: 2025-03-01
+
+compare_end:
+  type: date
+  name: "Compare End Date"
+  default: 2025-06-30
+
+PAGEVIEW_URL_PATH:
+  type: multiselect
+  name: "Page URL"
+  from: query
+  query: page_filter_options
+  column: PAGEVIEW_URL_PATH
+  default: /the-best-credit-cards
+
+
+{% endform %}
+
+ ---impact by page path
+-- Step 1: Aggregate metrics by page and period
+WITH base_data AS (
+  SELECT
+    CASE 
+      WHEN (PAGEVIEW_URL_PATH ILIKE '%the-best-credit-cards%' or PAGEVIEW_URL_PATH ilike '/credit-cards/best') THEN '/the-best-credit-cards' 
+      ELSE PAGEVIEW_URL_PATH 
+    END AS PAGEVIEW_URL_PATH,
+    
+    CASE 
+      WHEN DW_EFF_DT BETWEEN '{{ compare_start }}' AND '{{ compare_end }}' THEN 'compare'
+      WHEN DW_EFF_DT BETWEEN '{{ primary_start }}' AND '{{ primary_end }}' THEN 'primary'
+    END AS period,
+
+    SUM(SESSIONS_CT) AS sessions,
+    SUM(M_PAGEVIEWS_CT) AS mpageviews,
+    SUM(M_CLICKS_CT) AS mclicks,
+    SUM(APPLICATION_CT) AS applications,
+    SUM(CLICK_DT_TRANSACTIONS_CT) AS transactions,
+    SUM(CLICK_DT_REVENUE_AM) AS revenue
+
+  FROM CORP_MART.PROD.CORPORATE_METRICS_AGG_EXTENDED
+
+  WHERE (
+    DW_EFF_DT BETWEEN '{{ compare_start }}' AND '{{ compare_end }}'
+    OR DW_EFF_DT BETWEEN '{{ primary_start }}' AND '{{ primary_end }}'
+  )
+    AND PAGEVIEW_URL_PATH IS NOT NULL
+    and (PAGEVIEW_URL_PATH ilike '/the-best-credit-cards%' 
+or PAGEVIEW_URL_PATH ilike '/best/credit-cards/%'
+or PAGEVIEW_URL_PATH ilike '/article/credit-cards/%'
+or PAGEVIEW_URL_PATH ilike '/article/travel/%'
+or PAGEVIEW_URL_PATH ilike '/reviews/credit-cards/%'
+or PAGEVIEW_URL_PATH ilike '/compare/credit-cards%'
+or PAGEVIEW_URL_PATH ilike '/credit-cards/best%' 
+or PAGEVIEW_URL_PATH ilike '/credit-cards/reviews%'
+or PAGEVIEW_URL_PATH ilike '/credit-cards/compare%'
+)
+    AND PAGEVIEW_URL_PATH NOT ILIKE '%small-business%'
+    AND VERTICAL = 'Credit Cards'
+
+  GROUP BY 1, 2
+),
+
+-- Step 2: Compute derived metrics
+metrics AS (
+  SELECT
+    PAGEVIEW_URL_PATH,
+    period,
+    revenue,
+    revenue / NULLIF(transactions, 0) AS arpt,
+    mclicks / NULLIF(mpageviews, 0) AS mcmpv,
+    applications / NULLIF(mclicks, 0) AS app_rate,
+    transactions / NULLIF(applications, 0) AS approval_rate,
+    mpageviews / NULLIF(sessions, 0) AS mpv_per_session,
+    revenue / NULLIF(sessions, 0) AS arps
+  FROM base_data
+),
+
+-- Step 3: Pivot into wide format
+pivoted AS (
+  SELECT
+    PAGEVIEW_URL_PATH,
+
+    -- Primary period
+    MAX(CASE WHEN period = 'primary' THEN revenue END) AS revenue_primary,
+    MAX(CASE WHEN period = 'primary' THEN arpt END) AS arpt_primary,
+    MAX(CASE WHEN period = 'primary' THEN mcmpv END) AS mcmpv_primary,
+    MAX(CASE WHEN period = 'primary' THEN app_rate END) AS app_rate_primary,
+    MAX(CASE WHEN period = 'primary' THEN approval_rate END) AS approval_rate_primary,
+    MAX(CASE WHEN period = 'primary' THEN mpv_per_session END) AS mpv_sess_primary,
+    MAX(CASE WHEN period = 'primary' THEN arps END) AS arps_primary,
+
+    -- Compare period
+    MAX(CASE WHEN period = 'compare' THEN revenue END) AS revenue_compare,
+    MAX(CASE WHEN period = 'compare' THEN arpt END) AS arpt_compare,
+    MAX(CASE WHEN period = 'compare' THEN mcmpv END) AS mcmpv_compare,
+    MAX(CASE WHEN period = 'compare' THEN app_rate END) AS app_rate_compare,
+    MAX(CASE WHEN period = 'compare' THEN approval_rate END) AS approval_rate_compare,
+    MAX(CASE WHEN period = 'compare' THEN mpv_per_session END) AS mpv_sess_compare,
+    MAX(CASE WHEN period = 'compare' THEN arps END) AS arps_compare
+
+  FROM metrics
+  GROUP BY PAGEVIEW_URL_PATH
+),
+
+-- Step 4: Decomposition chain
+ decomposed AS (
+  SELECT *,
+    -- Hybrid stages
+    arpt_compare * mcmpv_primary * app_rate_primary * approval_rate_primary * mpv_sess_primary AS arps_if_only_arpt_changed,
+    arpt_compare * mcmpv_compare * app_rate_primary * approval_rate_primary * mpv_sess_primary AS arps_if_mcmpv_changed,
+    arpt_compare * mcmpv_compare * app_rate_compare * approval_rate_primary * mpv_sess_primary AS arps_if_app_rate_changed,
+    arpt_compare * mcmpv_compare * app_rate_compare * approval_rate_compare * mpv_sess_primary AS arps_if_approval_changed,
+    arpt_compare * mcmpv_compare * app_rate_compare * approval_rate_compare * mpv_sess_compare AS recomputed_arps_compare,
+
+    -- Impacts in bottom-up direction (to match first query)
+    (arps_primary - arps_if_only_arpt_changed) AS impact_arpt,
+    (arps_if_only_arpt_changed - arps_if_mcmpv_changed) AS impact_mcmpv,
+    (arps_if_mcmpv_changed - arps_if_app_rate_changed) AS impact_app_rate,
+    (arps_if_app_rate_changed - arps_if_approval_changed) AS impact_approval_rate,
+    (arps_if_approval_changed - arps_compare) AS impact_mpv_sess
+
+  FROM pivoted
+)
+
+
+-- Step 5: Waterfall chart output
+SELECT 
+  PAGEVIEW_URL_PATH,
+  step_order,
+  step,
+  value
+FROM (
+  SELECT PAGEVIEW_URL_PATH, 1 AS step_order, 'ARPS_COMPARE' as step, arps_compare as value FROM decomposed
+  UNION ALL
+  SELECT PAGEVIEW_URL_PATH, 2, '+ MPV/Session', impact_mpv_sess FROM decomposed
+  UNION ALL
+  SELECT PAGEVIEW_URL_PATH, 5, '+ Approval Rate', impact_approval_rate FROM decomposed
+  UNION ALL
+  SELECT PAGEVIEW_URL_PATH, 4, '+ App Rate', impact_app_rate FROM decomposed
+  UNION ALL
+  SELECT PAGEVIEW_URL_PATH, 3, '+ mClick/mPV', impact_mcmpv FROM decomposed
+  UNION ALL
+  SELECT PAGEVIEW_URL_PATH, 6, '+ ARPT', impact_arpt FROM decomposed
+  UNION ALL
+  SELECT PAGEVIEW_URL_PATH, 7, '= ARPS_PRIMARY', arps_primary FROM decomposed
+) steps
+ORDER BY PAGEVIEW_URL_PATH, step_order
+
+
+
+
+{% form %}
+
+primary_start:
+  type: date
+  name: "Primary Start Date"
+  default: 2025-07-01
+
+primary_end:
+  type: date
+  name: "Primary End Date"
+  default: 2025-09-30
+
+compare_start:
+  type: date
+  name: "Compare Start Date"
+  default: 2025-03-01
+
+compare_end:
+  type: date
+  name: "Compare End Date"
+  default: 2025-06-30
+
+PAGEVIEW_URL_PATH:
+  type: multiselect
+  name: "Page URL"
+  from: query
+  query: page_filter_options
+  column: PAGEVIEW_URL_PATH
+  default: /the-best-credit-cards
+
+
+{% endform %}
