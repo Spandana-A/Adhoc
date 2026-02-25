@@ -1,0 +1,166 @@
+---Travel Page posoiton performance
+
+with impressions as (
+  select 
+    date_trunc('week', imp.SKU_IMPRESSION_DT) as week_start,
+    imp.SKU_ID,
+    sku.SKU_NAME,
+    case when sess.DEVICE_TYPE = 'desktop' then 'desktop' else 'mobile' end as dvc_type,
+    (imp.IMPRESSION_POSITION + 1) as IMPRESSION_POSITION,
+    imp.SKU_IMPRESSION_ID
+  from NEXUS.PROD.F_SKU_IMPRESSION imp
+  inner join NEXUS.PROD.D_SESSION sess 
+    on imp.SESSION_ID = sess.SESSION_ID
+  left join NEXUS.PROD.D_SKU sku 
+    on imp.SKU_ID = sku.SKU_ID 
+    and sku.CURR_IN
+  where 
+    (parse_url(imp.IMPRESSION_PAGE_URL,1):path::varchar  ilike 'best/credit-cards/travel' or parse_url(imp.IMPRESSION_PAGE_URL,1):path::varchar  ilike 'credit-cards/best/travel')
+    and imp.IMPRESSION_PAGE_URL not ilike '%small-business%'
+    and imp.IMPRESSION_PAGE_URL not ilike '%/m/%'
+    and imp.SKU_IMPRESSION_DT between '2025-01-01' and CURRENT_DATE
+)
+
+select 
+  week_start,
+  SKU_ID,
+  SKU_NAME,
+  dvc_type,
+  count(distinct SKU_IMPRESSION_ID) as num_impressions,
+  sum(IMPRESSION_POSITION * 1.0) / count(*) as avg_position,
+  sum(IMPRESSION_POSITION * 1.0) / count(distinct SKU_IMPRESSION_ID) as weighted_avg_position
+from impressions
+group by week_start, SKU_ID, SKU_NAME,dvc_type
+order by week_start, weighted_avg_position asc
+
+
+/*with base as (
+  select
+    sku.SKU_NAME,
+    imp.SKU_IMPRESSION_ID,
+    imp.IMPRESSION_POSITION + 1 as IMPRESSION_POSITION,
+    sess.DEVICE_TYPE,
+    sf.SHOPPING_FINISH_ID
+  from NEXUS.PROD.F_SKU_IMPRESSION imp 
+  inner join NEXUS.PROD.D_SESSION sess 
+    on imp.SESSION_ID = sess.SESSION_ID
+  left join NEXUS.PROD.D_SKU sku 
+    on imp.SKU_ID = sku.SKU_ID and sku.CURR_IN
+  left join NEXUS.PROD.F_SHOPPING_FINISH sf 
+    on imp.SKU_IMPRESSION_ID = sf.SKU_IMPRESSION_ID
+    and sf.SHOPPING_FINISH_DT between '2025-03-01' and '2025-07-27'
+  left join NEXUS.PROD.F_AFFILIATE_TRANSACTION txn 
+    on sf.SHOPPING_FINISH_ID = txn.SHOPPING_FINISH_ID 
+    and txn.REVENUE_TRANSACTION_IN 
+  where imp.IMPRESSION_PAGE_URL ilike '%/best/credit-cards/travel%'
+    and imp.IMPRESSION_PAGE_URL not ilike '%small-business%'
+    and imp.IMPRESSION_PAGE_URL not ilike '%/m/%'
+    and imp.SKU_IMPRESSION_DT between '2025-03-01' and '2025-07-27'
+),
+agg as (
+  select
+    SKU_NAME,
+    DEVICE_TYPE,
+    IMPRESSION_POSITION,
+    count(distinct SKU_IMPRESSION_ID) as num_impressions,
+    count(distinct SHOPPING_FINISH_ID) as num_finishes,
+    count(distinct SHOPPING_FINISH_ID) * 1.0 / nullif(count(distinct SKU_IMPRESSION_ID), 0) as ctr
+  from base
+  group by SKU_NAME, DEVICE_TYPE, IMPRESSION_POSITION
+),
+ranked as (
+  select *,
+    row_number() over (partition by SKU_NAME, DEVICE_TYPE order by ctr desc) as ctr_rank
+  from agg
+)
+select *
+from ranked
+where ctr_rank <= 3
+order by SKU_NAME, DEVICE_TYPE, ctr_rank;
+*/
+
+---Summary Table and product card performance
+
+  select 
+  case when sess.DEVICE_TYPE = 'desktop' then 'desktop' else 'mobile' end as device_type
+  ,parse_url(imp.impression_page_url,1):path::string as page_path
+  ,imp.IMPRESSION_SECTION
+  ,count(distinct imp.SKU_IMPRESSION_ID) impressions
+  ,count(distinct sf.SHOPPING_FINISH_ID) mclicks
+  ,count(distinct case when at.REVENUE_INGESTED > 0 then sf.SHOPPING_FINISH_ID end) txns
+  , sum(at.REVENUE_INGESTED) revenue
+  from NEXUS.PROD.F_SKU_IMPRESSION imp
+  inner join NEXUS.PROD.D_SESSION sess 
+  on imp.SESSION_ID = sess.SESSION_ID
+  left join NEXUS.PROD.F_SHOPPING_FINISH sf
+  on imp.SKU_IMPRESSION_ID = sf.SKU_IMPRESSION_ID
+  and parse_url(sf.impression_page_url,1):path::string in ( 'the-best-credit-cards',
+'best/credit-cards/travel',
+'best/credit-cards/balance-transfer',
+'best/credit-cards/cash-back',
+'best/credit-cards/rewards',
+'best/credit-cards/low-interest',
+'best/credit-cards/zero-percent',
+'best/credit-cards/bonus-offers',
+'best/credit-cards/airline',
+'best/credit-cards/college-student',
+'best/credit-cards/bad-credit',
+'best/credit-cards/no-foreign-transaction-fee',
+'best/credit-cards/groceries',
+'best/credit-cards/gas',
+'best/credit-cards/airport-lounge-access',
+'best/credit-cards/united-airlines-cards',
+'best/credit-cards/secured',
+'best/credit-cards/no-credit',
+'best/credit-cards/american-express-cards',
+'best/credit-cards/tsa-precheck-global-entry',
+'best/credit-cards/building-credit',
+'best/credit-cards/hotel',
+'best/credit-cards/american-airlines-cards',
+'best/credit-cards/2-percent-cash-back',
+'best/credit-cards/restaurants',
+'best/credit-cards/no-annual-fee',
+'best/credit-cards/capital-one-cards',
+'best/credit-cards/chase-cards',
+'best/credit-cards/delta-airlines-cards',
+'best/credit-cards/no-annual-fee-travel',
+'best/credit-cards/fair-credit')
+left join NEXUS.PROD.F_AFFILIATE_TRANSACTION at 
+    on sf.SHOPPING_FINISH_ID = at.SHOPPING_FINISH_ID
+    and at.REVENUE_INGESTED > 0
+  where 
+    parse_url(imp.impression_page_url,1):path::string in ( 'the-best-credit-cards',
+'best/credit-cards/travel',
+'best/credit-cards/balance-transfer',
+'best/credit-cards/cash-back',
+'best/credit-cards/rewards',
+'best/credit-cards/low-interest',
+'best/credit-cards/zero-percent',
+'best/credit-cards/bonus-offers',
+'best/credit-cards/airline',
+'best/credit-cards/college-student',
+'best/credit-cards/bad-credit',
+'best/credit-cards/no-foreign-transaction-fee',
+'best/credit-cards/groceries',
+'best/credit-cards/gas',
+'best/credit-cards/airport-lounge-access',
+'best/credit-cards/united-airlines-cards',
+'best/credit-cards/secured',
+'best/credit-cards/no-credit',
+'best/credit-cards/american-express-cards',
+'best/credit-cards/tsa-precheck-global-entry',
+'best/credit-cards/building-credit',
+'best/credit-cards/hotel',
+'best/credit-cards/american-airlines-cards',
+'best/credit-cards/2-percent-cash-back',
+'best/credit-cards/restaurants',
+'best/credit-cards/no-annual-fee',
+'best/credit-cards/capital-one-cards',
+'best/credit-cards/chase-cards',
+'best/credit-cards/delta-airlines-cards',
+'best/credit-cards/no-annual-fee-travel',
+'best/credit-cards/fair-credit')
+    and imp.IMPRESSION_PAGE_URL not ilike '%small-business%'
+    and imp.IMPRESSION_PAGE_URL not ilike '%/m/%'
+    and imp.SKU_IMPRESSION_DT between '2025-06-01' and CURRENT_DATE-4
+    group by all
