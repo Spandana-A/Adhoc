@@ -1,0 +1,146 @@
+With
+pageviews as (
+    select  p.PAGEVIEW_DT
+           ,p.PAGEVIEW_ID
+           ,p.page_id
+           ,p.page_name
+           ,p.PAGEVIEW_URL_PATH
+           ,p.referrer_url_path
+           ,p.REFERRER_URL_SITE
+           ,CASE 
+           when p.referrer_url_path ilike 'article/travel/%' then 'Travel Article'
+             when p.REFERRER_URL_PATH ilike 'travel/learn/%' then 'Travel Article'
+             when p.REFERRER_URL_PATH ilike 'travel/news/%' then 'Travel Article'
+        when p.referrer_url_path ilike 'article/credit-cards/%' then 'Credit Cards Article' 
+        when p.REFERRER_URL_PATH ilike 'credit-cards/learn/%' then 'Credit Cards Article'
+        when p.REFERRER_URL_PATH ilike 'credit-cards/news/%' then 'Credit Cards Article'
+        when p.referrer_url_path ilike 'article/%' then 'Other Article' 
+        when p.referrer_url_path ilike '%/learn/%' then 'Other Article' 
+        when p.referrer_url_path ilike '%/news/%' then 'Other Article' 
+           when p.referrer_url_path ilike '%reviews/%' then 'Review'
+           when ((p.referrer_url_path ilike '%best/credit-cards/%' OR p.referrer_url_path ilike '%credit-cards/best/%') AND p.referrer_url_path NOT ilike 'm/%') then 'Organic Roundup'
+          when (p.referrer_url_path ilike 'm/%') then 'Marketing Roundup'
+          when (p.referrer_url_path ilike 'l/%') then 'Landing Pages'
+         when p.referrer_url_site ilike '%google%' then 'SERP'
+        when p.referrer_url_path ilike '%search/%' then 'Onsite-search'
+        when (p.referrer_url_path ilike '%compare/credit-cards%' or p.referrer_url_path ilike '%credit-cards/compare%') then 'Compare Page'
+        when ((p.referrer_url_path ilike '%the-best-credit-cards%' or p.referrer_url_path ilike '%credit-cards/best'  )AND p.referrer_url_path NOT ilike 'm/%') then 'BCC' 
+        WHEN (p.REFERRER_URL_PATH is null and p.REFERRER_URL_SITE is null) then 'Unknown'
+          WHEN (LOWER(p.referrer_url_site) LIKE '%chatgpt.com%'
+        OR LOWER(p.referrer_url_site) LIKE '%openai.com%'
+        OR LOWER(p.referrer_url_site) LIKE '%claude.ai%'
+        OR LOWER(p.referrer_url_site) LIKE '%anthropic.com%'
+        OR LOWER(p.referrer_url_site) LIKE '%perplexity.ai%'
+        OR LOWER(p.referrer_url_site) LIKE '%copilot%'
+        OR LOWER(p.referrer_url_site) LIKE '%poe.com%'
+        OR LOWER(p.referrer_url_site) LIKE '%huggingface.co%'
+        OR LOWER(p.referrer_url_site) LIKE '%character.ai%') THEN 'AI Domain'
+        else 'Other' end REFERRER_TAXONOMY
+           ,p.TAXO_PAGE_TYPE
+           ,s.SUPPLEMENTARY:TRADITIONAL_DEVICE_ID::string as session_traditional_device_id
+           ,p.SUPPLEMENTARY:TRADITIONAL_DEVICE_ID::string as traditional_device_id
+           ,right(p.SUPPLEMENTARY:TRADITIONAL_DEVICE_ID,36)::string TRADITIONAL_DEVICE_ID_SHORT
+           ,p.ANONYMOUS_ID
+           ,p.USER_ID
+           ,p.SESSION_ID
+           ,p.DEVICE_PLATFORM
+           ,p.DEVICE_TYPE
+           ,s.first_page_page_type
+           ,s.first_url_path
+           ,s.TRAFFIC_CHANNEL
+    from NEXUS.PROD.F_PAGEVIEW p
+    inner join NEXUS.PROD.D_SESSION s
+        on p.SESSION_ID = s.SESSION_ID
+        and s.SESSION_START_DT >= '2025-01-01'
+    where PAGEVIEW_TS >= '2025-01-01'
+    and (PAGEVIEW_URL_PATH ilike '%reviews/credit-cards/%' or PAGEVIEW_URL_PATH ilike '/credit-cards/reviews/%')
+    and PAGEVIEW_URL_PATH not ilike '%small-business%'
+    --and s.attribution_type = 'organic'
+    )
+,
+mclicks as (
+  select  
+  i.SKU_IMPRESSION_ID
+           ,i.SESSION_ID
+           ,i.IMPRESSION_PAGEVIEW_ID
+           ,i.SKU_ID
+           ,i.SKU_IMPRESSION_DT
+           ,i.SKU_PRODUCT_TYPE
+           ,s.INSTITUTION_NAME
+           ,s.SKU_NAME
+           ,i.VERTICAL_NAME
+           ,m.SHOPPING_FINISH_ID
+           ,t.DW_CREATE_TS as transaction_create_ts
+           ,t.TRANSACTION_COUNT
+           ,t.REVENUE_INGESTED
+           ,t.shopping_finish_id as txn_id
+    from NEXUS.PROD.F_SKU_IMPRESSION i
+    left join NEXUS.PROD.F_SHOPPING_FINISH m
+        on i.SKU_IMPRESSION_ID = m.SKU_IMPRESSION_ID
+        and m.SHOPPING_FINISH_DT >= '2025-01-01'
+    left join NEXUS.PROD.D_SKU s
+        on s.CURR_IN
+        and i.SKU_ID = s.SKU_ID
+    left join NEXUS.PROD.F_AFFILIATE_TRANSACTION t
+        on t.curr_in
+        and m.SHOPPING_FINISH_ID = t.SHOPPING_FINISH_ID
+        and t.REVENUE_TRANSACTION_IN
+    where i.SKU_IMPRESSION_DT >= '2025-01-01'
+    and i.monetizable = 'yes_assumed'
+    --and i.SKU_PRODUCT_TYPE = 'credit_cards'
+    and (i.impression_page_url ilike '%reviews/credit-cards/%' or i.impression_page_url ilike '%credit-cards/reviews%' )
+    and i.impression_page_url not ilike '%small-business%'
+)
+, mclick_data as (
+    select  p.PAGEVIEW_DT
+           ,p.PAGEVIEW_ID
+           ,p.PAGEVIEW_URL_PATH
+           ,p.referrer_url_path
+           ,p.REFERRER_URL_SITE
+           ,p.REFERRER_TAXONOMY
+           ,p.traffic_channel
+           ,p.first_page_page_type
+           ,p.first_url_path
+           ,p.SESSION_ID
+           ,p.DEVICE_PLATFORM
+           ,p.DEVICE_TYPE
+           ,m.SHOPPING_FINISH_ID
+           ,m.SKU_IMPRESSION_ID
+           ,m.IMPRESSION_PAGEVIEW_ID
+           ,m.SKU_ID
+           ,m.SKU_PRODUCT_TYPE
+          ,m.INSTITUTION_NAME
+          ,m.SKU_NAME
+           ,m.TRANSACTION_COUNT
+           ,m.REVENUE_INGESTED
+           ,m.transaction_create_ts
+            , m.txn_id
+    from pageviews p
+    left join mclicks m
+        on p.PAGEVIEW_ID = m.IMPRESSION_PAGEVIEW_ID
+)
+select EXTRACT(MONTH FROM PAGEVIEW_DT) || '-' || EXTRACT(YEAR FROM PAGEVIEW_DT) AS month_year
+        ,CASE when DEVICE_TYPE in ('mobile','tablet') then 'mobile' else device_type end as DEVICE_TYPE
+        ,REFERRER_TAXONOMY
+        ,referrer_url_path
+        ,REFERRER_URL_SITE
+        ,traffic_channel
+       -- ,first_url_path
+       -- ,SKU_NAME
+        ,first_page_page_type
+       ,count(distinct case when SKU_IMPRESSION_ID is not null then PAGEVIEW_ID end) as mpvs
+        ,count(distinct SESSION_ID) as sessions
+        ,count(distinct SKU_IMPRESSION_ID) as impressions
+  ,count(distinct SHOPPING_FINISH_ID ) as mclicks
+        ,round(sum(TRANSACTION_COUNT),2) as txns
+        ,round(sum(REVENUE_INGESTED),2) as revenue
+
+        
+from mclick_data
+where device_type in ('mobile','desktop','tablet')
+group by 1,2,3,4,5,6,7
+order by 1,2,11 desc
+
+
+
+
