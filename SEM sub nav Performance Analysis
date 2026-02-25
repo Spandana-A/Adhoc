@@ -1,0 +1,128 @@
+SET (start_time, end_time)= ('2025-10-01', '2025-11-01' );
+
+
+
+--order by variation_key)
+With sessions as (
+select distinct 
+fp.SESSION_ID
+        ,fp.pageview_id
+         ,fp.monetize_in
+      , dateadd('hour',-8,fp.PAGEVIEW_TS)::date PAGEVIEW_DT
+      , fp.PAGEVIEW_URL_PATH
+       , CASE WHEN  ds.REFERRER_URL_TX ilike any ('%deals.softy.org%','%find.amazingfact.org%',
+'%find.bonusbuyer.net%',
+'%find.clevershopper.com%',
+'%find.crowdsearch.net%',
+'%find.softy.org%',
+'%go.bargainboom.com%',
+'%go.dugouthub.com%',
+'%go.exclaim.com%',
+'%results.stints.com%',
+'%search.extensively.net%',
+'%search.webnavigator.com%',
+'%srch.futurenews.com%',
+'%ww1.futurenews.com%'
+)  THEN 'Low-quality Referrer'
+ELSE 'Other Traffic'
+END as traffic_category
+      , case when ds.DEVICE_TYPE ilike '%tablet%' then 'mobile'
+      else ds.DEVICE_TYPE end as device_type
+      , eng_sess.is_engaged_session
+    from  NEXUS.PROD.F_PAGEVIEW fp
+      inner join nexus.prod.D_SESSION ds
+      on fp.session_id = ds.session_id
+      and ds.session_start_dt between $start_time and $end_time
+      left join SEO_MART.PROD.SESSIONS_AND_PAGEVIEWS_TRANSACTION_ENRICHED eng_sess 
+      on ds.session_id = eng_sess.session_id
+      where fp.PAGEVIEW_URL_PATH != '/'
+      and  (fp.pageview_url_path ilike '/m/credit-cards/excellent-credit-cards%' or fp.pageview_url_path ilike '/m/credit-cards/excellent-credit-cards-2%')
+      and dateadd('hour',-8,fp.PAGEVIEW_TS) between $start_time and $end_time
+)
+,feature_viewed as 
+(
+select dateadd('hour',-8,ORIGINAL_TIMESTAMP)::date FV_DATE, IMPRESSION_PAGEVIEW_ID,ENTITY_NAME,ACTIVITY_ID
+from SHIBUYA_LANDZONE.CC_MARKETING_PAGES_PROD.FEATURE_VIEWED
+where entity_name = 'cc_sub_nav'
+and dateadd('hour',-8,ORIGINAL_TIMESTAMP)::date between $start_time and $end_time
+
+)
+,page_action as (
+select dateadd('hour',-8,TIMESTAMP)::date as ACTION_DATE,ACTIVITY_ID, PARENT_ACTIVITY_ID,ADDITIONAL_ATTRIBUTES_SUB_NAV_CATEGORY, ADDITIONAL_ATTRIBUTES_SUB_NAV_SECTION
+from SHIBUYA_LANDZONE.CC_MARKETING_PAGES_PROD.PAGE_ACTION
+where action_name = 'sub_nav_interaction'
+and dateadd('hour',-8,TIMESTAMP)::date between $start_time and $end_time
+)--,
+ --shopping as (
+      select 
+      a.device_type
+      ,b.sku_id
+      ,pv.pageview_url_path
+      ,pv.monetize_in
+      ,pv.pageview_dt
+      ,pv.pageview_id
+      ,a.session_id
+      ,fv.activity_id fv_activity_id
+      ,pa.activity_id pa_activity_id
+      ,pa.ADDITIONAL_ATTRIBUTES_SUB_NAV_CATEGORY
+      , dm.offer_nm as product_nm
+      , b.SKU_IMPRESSION_ID as impression_id
+      , b.IMPRESSION_SECTION as impression_section
+      , dm.institution_nm as affiliate_partner_nm
+      , c.SHOPPING_FINISH_ID as mclick_id
+      , app.shopping_finish_id as app_id
+      , d.TRANSACTION_ID as txn_id
+      , d.REVENUE_INGESTED as txn_revenue
+      from sessions  a
+      inner join nexus.prod.f_pageview pv 
+      on a.SESSION_ID = pv.SESSION_ID
+      and  pv.pageview_url_path in ('/m/credit-cards/excellent-credit-cards-2',
+      '/m/credit-cards/pay-0-intro-interest-2',
+      '/m/credit-cards/excellent-low-interest-credit-cards-2',
+      '/m/credit-cards/excellent-travel-credit-cards-2',
+      '/m/credit-cards/excellent-rewards-credit-cards-2',
+      '/m/credit-cards/excellent-cash-back-credit-cards-2',
+      '/m/credit-cards/excellent-student-credit-cards-2',
+      '/m/credit-cards/excellent-credit-cards',
+      '/m/credit-cards/pay-0-intro-interest',
+      '/m/credit-cards/excellent-low-interest-credit-cards',
+      '/m/credit-cards/excellent-travel-credit-cards',
+      '/m/credit-cards/excellent-rewards-credit-cards',
+      '/m/credit-cards/excellent-cash-back-credit-cards',
+      '/m/credit-cards/excellent-student-credit-cards') 
+      and dateadd('hour',-8,pv.PAGEVIEW_TS) between $start_time and $end_time
+      left join feature_viewed fv 
+      on pv.pageview_id = fv.IMPRESSION_PAGEVIEW_ID
+      left join page_action pa 
+      on fv.activity_id = pa.parent_activity_id
+      left join nexus.PROD.F_SKU_IMPRESSION b
+      on pv.pageview_id = b.impression_pageview_id
+      and b.supplementary:CONTEXT_PAGE_PATH in ('/m/credit-cards/excellent-credit-cards-2',
+      '/m/credit-cards/pay-0-intro-interest-2',
+      '/m/credit-cards/excellent-low-interest-credit-cards-2',
+      '/m/credit-cards/excellent-travel-credit-cards-2',
+      '/m/credit-cards/excellent-rewards-credit-cards-2',
+      '/m/credit-cards/excellent-cash-back-credit-cards-2',
+      '/m/credit-cards/excellent-student-credit-cards-2',
+      '/m/credit-cards/excellent-credit-cards',
+      '/m/credit-cards/pay-0-intro-interest',
+      '/m/credit-cards/excellent-low-interest-credit-cards',
+      '/m/credit-cards/excellent-travel-credit-cards',
+      '/m/credit-cards/excellent-rewards-credit-cards',
+      '/m/credit-cards/excellent-cash-back-credit-cards',
+      '/m/credit-cards/excellent-student-credit-cards')
+     and b.impression_page_url ilike '%/m/%'
+      and b.impression_section <> 'summary'
+      left join nexus.prod.d_marketplace dm
+      on b.sku_id = dm.offer_id
+      and dm.curr_in = TRUE
+      left join nexus.prod.F_SHOPPING_FINISH c
+      on c.SKU_IMPRESSION_ID = b.SKU_IMPRESSION_ID
+      and c.MONETIZABLE = 'yes_assumed'
+      left join CARDS_MART.PROD.SHOPPING_FINISH_APPLICATION_PIPELINE app 
+      on c.shopping_finish_id = app.shopping_finish_id
+      and app.f_application_in = 1
+     -- and c.SHOPPING_FINISH_DT >= $start_time
+      left join nexus.prod.F_AFFILIATE_TRANSACTION d
+      on d.SHOPPING_FINISH_ID = c.SHOPPING_FINISH_ID
+      and d.REVENUE_INGESTED >0
