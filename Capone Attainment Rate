@@ -1,0 +1,203 @@
+
+With partner_booked as (
+Select distinct 
+SRC_TRANSACTION_ID,
+    SRC_UNIQUE_CLICK_ID sf_id,
+    AFLT_TRAN_TYPE_CD,
+    AFLT_TRAN_STATUS_CD,
+    DW_PROD_NM, 
+     DW_CLICK_TS::DATE CLICK_DATE,
+    REVENUE_TRAN_IN, 
+    PERFORMANCE_FLAG,
+    PERFORMANCE_FLAG_DATE,
+    CATEGORY,
+    COUNTEROFFER_FLAG,
+    COMMISSION_AM,
+    TXN_CNT,
+    INTENDED_COMM_PAYOUT_AM,
+    INGESTED_COMMISSION_AM,
+    INGESTED_REVENUE_TRAN_IN,
+    INGESTED_TXN_CNT,
+    ATTAINMENT_RATE 
+    from PROD_ETL.ATARI_FORKLIFT.IMPACT_NEW_CAPITAL_ONE_CREDIT_CARDS
+   -- INNER JOIN 
+    where CATEGORY IN ('SAVORONE', 'QUICKSILVER', 'VENTUREONE', 'VENTUREX', 'VENTURE', 'SAVOR','SECUREDCARD', 'QUICKSILVERSTUDENT', 'PLATINUM', 'QUICKSILVERSECUREDCARD', 'QUICKSILVERONE', 'SAVORONESTUDENT', 'SAVORSTUDENT') 
+    and AFLT_TRAN_TYPE_CD in ('US Card Performance Flag (30-day Performance)','US Card Application Submit','US Card Booked Account (30-day Performance)','US Card Performance Flag (60-day Performance)','US Card Booked Account (60-day Performance)')
+    and AFLT_TRAN_STATUS_CD = 'Approved'
+ AND DW_CLICK_TS::DATE >= '2025-01-01'
+ and AFLT_TRAN_TYPE_CD IN ('US Card Booked Account (30-day Performance)','US Card Booked Account (60-day Performance)','US Card Performance Flag (30-day Performance)')
+ ),
+nexus_booked as (
+  SELECT 
+  DISTINCT
+      sf.SHOPPING_FINISH_DT AS DW_EFF_DT,
+      EXTRACT(HOUR FROM CONVERT_TIMEZONE('UTC', 'America/Los_Angeles', sf.SHOPPING_FINISH_TS)) AS HOUR_OF_DAY_PDT,
+      sku.offer_name,
+      sf.shopping_finish_id,
+      aflt.REVENUE_INGESTED,
+      aflt.REVENUE_TRANSACTION_IN,
+      aflt.transaction_type,
+      sf.session_id,
+      s.level2_traffic_source_name AS vendor_name,
+      REGEXP_SUBSTR(first_url_query_string, 'gclid=([^&]+)', 1, 1, 'e', 1) AS GCLID,
+      s.device_type,
+      s.attribution_type,
+      PARSE_URL(sf.impression_page_url, 1):path::varchar AS page_path,
+      case
+  when s.utm_campaign like '%brand%' then 'Brand'
+
+  -- Insurance STT
+  when s.utm_campaign like 'ai_mktg_paid%' then
+    case
+      when s.utm_campaign like '%lowcost%' then 'Low Cost'
+      when s.utm_campaign like '%topbest%' then 'Top Best'
+      when s.utm_campaign like '%carinsurancequotes%' then 'Car Insurance Quote'
+      when s.utm_campaign like '%carinsuranceestimate%' then 'Car Insurance Estimate'
+      when s.utm_campaign like '%carinsurance%' then 'Car Insurance'
+      when s.utm_campaign like '%autoinsurance%' then 'Auto Insurance'
+      else 'None'
+    end
+
+  -- Next STT (Banking vertical)
+  when s.utm_campaign like 'bk_mktg_paid%' then
+    case
+      when s.utm_campaign like any (
+        '%^_alpha^_bing%',
+        '%^_beta^_bing%',
+        '%^_alpha^_syndicated%',
+        '%^_beta^_syndicated%',
+        '%savings%'
+      ) escape '^' then 'Savings'
+      when s.utm_campaign like '%^_cds^_%' escape '^' then 'CD'
+      when s.utm_campaign like '%^_mma^_%' escape '^' then 'MMA'
+      when s.utm_campaign like '%checking%' then 'Checking'
+      else 'None'
+    end
+
+  -- Cards STT
+  when s.utm_campaign like 'cc_mktg_paid%' then
+    case
+      when s.utm_campaign like any ('%^_trav^_%', '%travel%') escape '^' then 'Travel'
+      when s.utm_campaign like '%^_plod^_%' escape '^' then 'Pay Less on Debt'
+      when s.utm_campaign like any ('%^_bt^_%', '%^_apr^_%', '%balancetransfer%') then 'Balance Transfer'
+      when s.utm_campaign like '%^_best^_%' escape '^' then 'Best'
+      when s.utm_campaign like '%^_rew^_%' escape '^' then 'Rewards'
+      when s.utm_campaign like '%upgrade%' then 'Upgrade'
+      when s.utm_campaign like '%howrew%' then 'How To Choose a Rewards Card'
+      when s.utm_campaign like '%^_cb^_%' escape '^' then 'Cash Back'
+      when s.utm_campaign like any ('%^_stud^_%', '%student%') escape '^' then 'Student'
+      when s.utm_campaign like any ('%^_biz^_%', '%business%') escape '^' then 'Business'
+      when s.utm_campaign like '%fairaverage%' then 'Fair Credit'
+      when s.utm_campaign like any ('%lowinterest%', '%^_lowint^_%') escape '^' then 'Low %'
+      when s.utm_campaign like '%^_bonus^_%' escape '^' then 'Bonus'
+      when s.utm_campaign like '%^_nofx^_%' escape '^' then 'No FX'
+      when s.utm_campaign like any ('%^_naf^_%', '%noannualfee%') escape '^' then 'No Annual Fee'
+      when s.utm_campaign like '%^_pay0^_%' escape '^' then 'Pay 0% Interest'
+      when s.utm_campaign like '%badcredit%' then 'Bad Credit'
+      when s.utm_campaign like '%cashback%' then 'Cash Back'
+      when s.utm_campaign like '%rewards%' then 'Rewards'
+      else 'None'
+    end
+
+  -- Lending STT (Student Loans vertical)
+  when s.utm_campaign like 'ed_mktg_paid%' then
+    case
+      when s.utm_campaign like '%^_refi%' escape '^' then 'Refinance'
+      when s.utm_campaign like '%^_orig%' escape '^' then 'Origination'
+      when s.utm_campaign like '%^_grad%' escape '^' then 'Grad'
+      when s.utm_campaign like '%medical%' then 'Medical'
+      else 'None'
+    end
+
+  -- Next STT (Investing vertical)
+  when s.utm_campaign like 'in_mktg_paid%' then
+    case
+      when s.utm_campaign like '%htbs%' then 'How To Buy Stocks'
+      when s.utm_campaign like '%broker%' then 'Broker'
+      when s.utm_campaign like '%robo^_%' escape '^' then 'Robo'
+      when s.utm_campaign like any ('%^_ira^_%', '%retirement%') escape '^' then 'Retirement'
+      when s.utm_campaign like '%^_ipo^_%' escape '^' then 'IPO'
+      when s.utm_campaign like '%finadv%' then 'Financial Advisor'
+      when s.utm_campaign like '%ms%' then 'Equity Research'
+      else 'None'
+    end
+
+  -- Lending STT (Mortgages vertical)
+  when s.utm_campaign like 'mr_mktg_paid%' then
+    case
+      when s.utm_campaign like any ('%^_rate%', '%rates%') escape '^' then 'Rate'
+      when s.utm_campaign like '%refi%' then 'Refinance'
+      when s.utm_campaign like '%purch%' then 'Purchase'
+      when s.utm_campaign like '%heloc%' then 'HELOC'
+      when s.utm_campaign like any ('%heloan%', '%home-equity%') then 'Heloan'
+      when s.utm_campaign like '%realtor%' then 'Realtor'
+      when s.utm_campaign like any ('%^_calc%', '%calculator%') escape '^' then 'Calculator'
+      when s.utm_campaign like '%^_fthb%' escape '^' then 'FTHB'
+      when s.utm_campaign like any ('%^_fha^_%', '%^_fha-%') escape '^' then 'FHA'
+      when s.utm_campaign like '%lender%' then 'Lender'
+      when s.utm_campaign like any ('%general%', '%^_head%') escape '^' then 'General'
+      when s.utm_campaign like '%preapproval%' then 'Preapproval'
+      when s.utm_campaign like '%^_dsa^_%' escape '^' then 'DSA'
+      when s.utm_campaign like '%mb%' then 'Mobile'
+      when s.utm_campaign like '%product%' then 'Product'
+      when s.utm_campaign like '%veterans%' then 'Veteran'
+      when s.utm_campaign like '%^_arm:%' escape '^' then 'ARM'
+      when s.utm_campaign like '%cash-out%' then 'Cash Out'
+      when s.utm_campaign like '%how-much%' then 'How Much'
+      else 'None'
+    end
+
+  -- Lending STT (Personal Loans vertical)
+  when s.utm_campaign like 'pl_mktg_paid%' then
+    case
+      when s.utm_campaign like '%consolidation%' then 'Consolidation'
+      when s.utm_campaign like any ('%homeimp%', '%homeimprovement%') then 'Home Improvement'
+      when s.utm_campaign like '%fairaverage%' then 'Fair Credit'
+      else 'None'
+    end
+
+  else 'None'
+end as value_prop_name,
+      s.utm_campaign
+    
+  FROM NEXUS.PROD.F_SHOPPING_FINISH sf
+    INNER JOIN CORP_MART.PROD.I_SESSIONS s
+    ON sf.session_id = s.session_id
+  LEFT JOIN NEXUS.PROD.D_SKU sku
+    ON sf.sku_id = sku.sku_id
+   AND sku.curr_in = TRUE
+   AND sku.SKU_PRODUCT_TYPE = 'credit_cards'
+  INNER JOIN NEXUS.PROD.F_AFFILIATE_TRANSACTION aflt
+    ON sf.shopping_finish_id = aflt.shopping_finish_id
+   AND aflt.CURR_IN
+   AND aflt.TRANSACTION_TYPE like any ('%Card Booked Account%', '%Performance Flag%')
+   and aflt.revenue_ingested is not null
+ -- and aflt.revenue_ingested != ''
+AND (
+      (aflt.REVENUE_TRANSACTION_IN = true  AND aflt.TRANSACTION_TYPE LIKE '%Card Booked Account%')
+   OR (aflt.REVENUE_TRANSACTION_IN = false AND aflt.TRANSACTION_TYPE LIKE '%Performance Flag%')
+    )
+   where sf.SHOPPING_FINISH_DT >= '2025-01-01' 
+   and sf.SKU_ID in ('36c93369-df56-4b40-a234-a49ebd5f5f77',
+'eb6605ae-a8c6-480d-9a3b-d79da54b2d7e',
+'361b31a0-2871-11ec-9598-c7a1c16f0f1a',
+'d82c7fbc-f559-11eb-b50e-577c1a5e54c3',
+'8aa2a824-b787-4d43-b8ec-60ce96dd2648',
+'cfeca922-52db-4b18-be5e-8e4fe1448448',
+'26c4a0ec-43a3-45b2-9c2e-b79b2d5fa55b',
+'735a53f0-f560-11eb-b723-0354a7fe7505',
+'a59fef9a-5006-449d-9527-3ae0c300e614',
+'f78bc091-3fa3-40f9-9177-a38af9a6a376',
+'1fc99a80-1508-4e14-83d7-eb5d5da65d97',
+'39cdfd80-3372-11ec-ba1e-0bd72314c41b',
+'499acef2-60fc-46e5-a8d5-70c6c98ce963')
+
+)
+
+SELECT
+  *
+FROM partner_booked p
+inner JOIN nexus_booked n
+  ON p.sf_id = n.shopping_finish_id
+  and AFLT_TRAN_TYPE_CD = transaction_type
+where AFLT_TRAN_TYPE_CD ilike '%Booked Account%'
