@@ -1,0 +1,506 @@
+--- Cardfinder:
+
+with form_starts as (
+select d.PAGEVIEW_DT as DW_EFF_DT
+, d.SESSION_ID
+, min(d.received_ts) as form_start_ts
+from NEXUS.PROD.F_PAGEVIEW d
+where d.pageview_url_path ilike '%recommend%'
+and d.PAGEVIEW_DT >= '2025-01-01'
+and d.PAGEVIEW_DT <= CURRENT_DATE-7
+and d.referrer_url_site = 'https://www.nerdwallet.com'
+group by 1,2
+)
+, form_completes as(
+select d.PAGEVIEW_DT as DW_EFF_DT
+, d.SESSION_ID
+, min(d.pageview_ts) as complete_ts
+from NEXUS.PROD.F_PAGEVIEW d
+where
+d.page_name = 'cc_match_results_page'
+and d.PAGEVIEW_DT >= '2025-01-01'
+and d.PAGEVIEW_DT <= CURRENT_DATE-7
+group by 1,2
+)
+,  mclicks_t as (
+select mc.DW_EFF_DT
+, mc.SESSION_ID
+, count(mc.shopping_finish_id) as mclicks_1
+from corp_mart.prod.i_mclicks mc
+where
+(mc.IMPRESSION_PAGE_URL_PATH ilike '%recommend%' or mc.IMPRESSION_PAGE_URL_PATH ilike '%pers-rec-results%')
+and mc.reporting_product_type = 'Credit Cards'
+and mc.DW_EFF_DT >= '2025-01-01'
+and mc.DW_EFF_DT <= CURRENT_DATE-7
+group by 1,2
+)
+
+,txns_t as
+(select t.DW_EFF_DT
+, t.session_id
+, sum(t.transaction_count) as txns_1
+from corp_mart.prod.i_revenue_affiliate_transactions t
+where
+(t.impression_page_url_path ilike '%recommend%' or t.impression_page_url_path ilike '%pers-rec-results%')
+and t.reporting_product_type = 'Credit Cards'
+and t.DW_EFF_DT >= '2025-01-01'
+and t.DW_EFF_DT <= CURRENT_DATE-7
+group by 1,2)
+
+,revenue_t as
+(select t.DW_EFF_DT
+, t.session_id
+, sum(t.revenue_ingested) as revenue_1
+from corp_mart.prod.i_revenue_affiliate_transactions t
+where
+(t.impression_page_url_path ilike '%recommend%' or t.impression_page_url_path ilike '%pers-rec-results%')
+and t.reporting_product_type = 'Credit Cards'
+and t.DW_EFF_DT >= '2025-01-01'
+and t.DW_EFF_DT <= CURRENT_DATE-7
+group by 1,2)
+
+
+
+select coalesce(f.DW_EFF_DT, c.DW_EFF_DT, m.DW_EFF_DT, t.dw_eff_dt, r.dw_eff_dt)::date as Dt
+, count(distinct f.SESSION_ID) as form_starts
+, count(distinct c.SESSION_ID) as completes
+, sum(mclicks_1) as mclicks
+, sum(txns_1) as txns
+, sum(revenue_1) as revenue
+, completes/nullifzero(form_starts) as cpfs
+, mclicks/nullifzero(form_starts) as mcps_start
+, txns/nullifzero(form_starts) as nconv_start
+, revenue/nullifzero(form_starts) as arps_start
+, txns/nullifzero(mclicks) as cconv
+, mclicks/nullifzero(completes) as mcps_com
+, txns/nullifzero(completes) as nconv_com
+, revenue/nullifzero(completes) as arps_com
+from form_starts f
+left join form_completes c
+on f.SESSION_ID = c.SESSION_ID
+left join mclicks_t m
+on m.SESSION_ID = c.SESSION_ID
+left join txns_t t
+on t.session_id = c.session_id
+left join revenue_t r
+on r.session_id = c.session_id
+group by all order by 1;
+
+--Cardfinder Registrations:
+
+
+with sessions as (
+select distinct PAGEVIEW_DT as DW_EFF_DT
+, SESSION_ID
+from nexus.prod.f_pageview
+where deployable_name = 'cardfinder'
+and PAGEVIEW_DT >= '2025-01-01'
+and PAGEVIEW_DT < CURRENT_DATE  -1 
+and referrer_url_site = 'https://www.nerdwallet.com'
+--and SUPPLEMENTARY:CONTEXT_PAGE_SEARCH::STRING = '?trk_location=cc_super_bowl' 
+)
+
+,registrations as (
+select distinct REGISTRATION_DT
+, SESSION_ID
+,USER_ID
+from NEXUS.PROD.F_REGISTRATION
+where DEPLOYABLE_NAME = 'cardfinder'
+and REGISTRATION_DT >= '2025-01-01'
+and REGISTRATION_DT < CURRENT_DATE  -1
+)
+
+select coalesce(s.DW_EFF_DT, r.REGISTRATION_DT)::date as Dt
+, count(distinct s.SESSION_ID) as sessions
+, count(distinct r.session_id) as registrations
+,count(distinct r.user_id) as users
+, registrations/sessions as registration_rate
+from sessions s
+left join registrations r
+on s.SESSION_ID = r.session_id
+group by 1 order by 1;
+
+--
+
+App to Organic Pages:
+
+
+with base as (
+  select distinct
+      pv.pageview_dt,
+      s.session_id
+  from NEXUS.PROD.D_SESSION s
+  join NEXUS.PROD.F_PAGEVIEW pv
+    on pv.session_id = s.session_id
+  where s.platform_type = 'native'
+    and s.session_start_dt >= '2025-01-01'
+    and pv.taxo_primary_vertical = 'Marketplace'
+    and pv.pageview_url_path in (
+      '/credit-card-match/quiz-offer-results',
+      '/market/credit-card-all-offers',
+      '/market/credit-card-offer-details',
+      '/market/credit-cards',
+      '/market/credit-cards/compare',
+      '/rewards/card-details',
+      '/rewards/credit-card-search',
+      '/shop'
+    )
+),
+
+app_organic as (
+  select
+    session_id,
+    case when pageview_url_path ilike '%reviews%' then 'Review_Page'
+         else 'Other_CC_Page'
+    end as page_type,
+    sum(m_clicks_ct) as mclicks_on_organic,
+    sum(click_dt_transactions_ct) as txns_on_organic,
+    sum(click_dt_revenue_am) as rev_on_organic
+  from CORP_MART.PROD.CORPORATE_METRICS_SESSLVL_L2Y_YTD
+  where vertical_rollup = 'Credit Cards'
+  and DEVICE_PLATFORM not ilike '%native%'
+    and dw_eff_dt >= '2025-01-01'
+  group by 1,2
+)
+
+select
+  b.pageview_dt,
+
+  coalesce(sum(case when ao.page_type = 'Review_Page' then ao.mclicks_on_organic end), 0) as mclicks_on_organic_review,
+  coalesce(sum(case when ao.page_type = 'Review_Page' then ao.txns_on_organic end), 0)   as txns_on_organic_review,
+  coalesce(sum(case when ao.page_type = 'Review_Page' then ao.rev_on_organic end), 0)    as rev_on_organic_review,
+
+  coalesce(sum(ao.mclicks_on_organic), 0) as mclicks_on_organic,
+  coalesce(sum(ao.txns_on_organic), 0)    as txns_on_organic,
+  coalesce(sum(ao.rev_on_organic), 0)     as rev_on_organic
+
+from base b
+inner join app_organic ao
+  on b.session_id = ao.session_id
+group by 1
+order by 1
+
+-- App Marketplace
+with base as (
+  select
+      pv.pageview_dt,
+      pv.pageview_id,
+      pv.monetize_in,
+      pv.pageview_url_path,
+      case
+        when pv.pageview_url_path in (
+          '/credit-card-match/quiz-offer-results',
+          '/market/credit-card-all-offers',
+          '/market/credit-card-offer-details',
+          '/market/credit-cards',
+          '/market/credit-cards/compare',
+          '/rewards/card-details',
+          '/rewards/credit-card-search',
+          '/shop'
+        )
+        then 'Page with CC Offers' else 'Other'
+      end as page_type,
+      s.session_id
+  from NEXUS.PROD.D_SESSION s
+  join NEXUS.PROD.F_PAGEVIEW pv
+    on pv.session_id = s.session_id
+  where s.platform_type = 'native'
+    and s.session_start_dt >= '2025-01-01'
+    and pv.taxo_primary_vertical = 'Marketplace'
+),
+
+sf as (
+  select
+    impression_pageview_id,
+    shopping_finish_id
+  from NEXUS.PROD.F_SHOPPING_FINISH
+  where shopping_finish_dt >= '2025-01-01'
+    and sku_product_type = 'credit_cards'
+    and monetizable = 'yes_assumed'
+),
+
+att as (
+  select
+    shopping_finish_id,
+    sum(revenue_ingested) as revenue_ingested
+  from NEXUS.PROD.F_AFFILIATE_TRANSACTION
+  where transaction_date >= '2025-01-01'
+    and revenue_ingested > 0
+  group by 1
+)
+
+select
+  b.pageview_dt,
+
+  count(distinct case when b.page_type = 'Page with CC Offers' then b.session_id end)
+    as sessions_that_saw_a_page_with_cc_offer,
+  count(distinct b.session_id) as sessions,
+
+  count(distinct case when b.page_type = 'Page with CC Offers' and b.monetize_in = true then b.pageview_id end)
+    as mpvs_that_saw_a_page_with_cc_offer,
+  count(distinct case when b.monetize_in = true then b.pageview_id end) as mpvs,
+
+  count(distinct sf.shopping_finish_id) as mclicks,
+  count(distinct case when att.shopping_finish_id is not null then sf.shopping_finish_id end) as txns,
+
+  coalesce(sum(att.revenue_ingested), 0) as revenue
+
+from base b
+left join sf
+  on b.pageview_id = sf.impression_pageview_id
+left join att
+  on sf.shopping_finish_id = att.shopping_finish_id
+group by 1
+order by 1
+
+--email / Push performance
+WITH base AS (
+  SELECT
+    user_id,
+    anonymous_id,
+    registration_ts,
+    driver_page_url,
+    REGEXP_SUBSTR(driver_page_url, 'utm_campaign=([^&]+)', 1, 1, 'i', 1) AS utm_campaign,
+REGEXP_SUBSTR(driver_page_url, 'utm_source=([^&]+)', 1, 1, 'i', 1) AS utm_source,
+COALESCE(
+  REGEXP_SUBSTR(driver_page_url, 'utm_campaign=([^&]+)', 1, 1, 'i', 1),
+  REGEXP_SUBSTR(driver_page_url, 'utm_source=([^&]+)', 1, 1, 'i', 1),
+  REGEXP_SUBSTR(driver_page_url, '\\.com([^?]+)', 1, 1, 'i', 1)
+) AS utm_or_page_path
+  FROM nexus.prod.f_registration
+  WHERE relationship_type <> 'PWRU'
+    AND driver_location = 'travel_nerd_email_banner'
+    -- AND driver_sub_location = 'travel_mktg_paid_interest_0914_lp2'
+    AND registration_dt::DATE >= DATE('2024-01-01')
+),
+
+u_first_by_anon AS (  -- earliest per anonymous_id
+  SELECT base.*
+  FROM base
+  WHERE anonymous_id IS NOT NULL
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY anonymous_id ORDER BY registration_ts ASC) = 1
+),
+
+u_first_by_user AS (  -- earliest per user_id
+  SELECT base.*
+  FROM base
+  WHERE user_id IS NOT NULL
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY registration_ts ASC) = 1
+)
+,s_agg AS (
+  SELECT
+    s.DW_EFF_DT,
+    s.vertical,
+    s.VERTICAL_ROLLUP,
+    s.ENTRY_VERTICAL,
+    s.ENTRY_VERTICAL_ROLLUP,
+    s.traffic_channel,
+    s.DEVICE_TYPE,
+    s.TAXO_PAGE_TYPE,
+    s.PAGEVIEW_URL_PATH,
+    s.IS_REG_SESSION,
+    s.USER_ID,
+    s.ANONYMOUS_ID,
+    s.USER_TYPE,
+    s.REG_DT,
+    s.PLATFORM_TYPE,
+    s.LANDING_PAGE_PATH_TX,
+    s.AFFILIATE_PARTNER_NAME,
+    s.PRODUCT_NAME,
+    s.ATTRIBUTION_TYPE,
+    s.SESSION_ID,
+
+    /* keep if you need this for "other" filter */
+    s.utm_campaign,
+
+    SUM(s.SESSIONS_CT)                 AS SESSIONS_CT,
+    SUM(s.M_PAGEVIEWS_CT)              AS M_PAGEVIEWS_CT,
+    SUM(s.M_PRODUCT_IMPRESSIONS_CT)    AS M_PRODUCT_IMPRESSIONS_CT,
+    SUM(s.M_CLICKS_CT)                 AS M_CLICKS_CT,
+    SUM(s.APPLICATION_CT)              AS APPLICATION_CT,
+    SUM(s.CLICK_DT_TRANSACTIONS_CT)    AS CLICK_DT_TRANSACTIONS_CT,
+    SUM(s.CLICK_DT_REVENUE_AM)         AS CLICK_DT_REVENUE_AM
+  FROM corp_mart.prod.corporate_metrics_sesslvl_l2y_ytd AS s
+  WHERE s.traffic_channel = 'Email and Push'
+ and s.utm_campaign ILIKE 'cc_crm%'
+    AND s.DW_EFF_DT >= '2025-01-01'
+    AND s.SESSION_ID IS NOT NULL
+  GROUP BY
+    s.DW_EFF_DT, s.vertical, s.VERTICAL_ROLLUP, s.ENTRY_VERTICAL, s.ENTRY_VERTICAL_ROLLUP,
+    s.traffic_channel, s.DEVICE_TYPE, s.TAXO_PAGE_TYPE, s.PAGEVIEW_URL_PATH, s.IS_REG_SESSION,
+    s.USER_ID, s.ANONYMOUS_ID, s.USER_TYPE, s.REG_DT, s.PLATFORM_TYPE, s.LANDING_PAGE_PATH_TX,
+    s.AFFILIATE_PARTNER_NAME, s.PRODUCT_NAME, s.ATTRIBUTION_TYPE, s.SESSION_ID, s.utm_campaign
+),
+
+/* Travel segment: keep your join logic + coalesce exactly */
+travel AS (
+  SELECT
+    'Travel_newsletter - Email/Push' AS segment,
+    s.*,
+    COALESCE(u2.driver_page_url, u1.driver_page_url) AS TRAVEL_NEWSLETTER_SIGNUP_DRIVER_PAGE_URL,
+    COALESCE(u2.utm_campaign,    u1.utm_campaign)    AS TRAVEL_NEWSLETTER_SIGNUP_UTM_CAMPAIGN,
+    COALESCE(u2.utm_or_page_path,u1.utm_or_page_path)AS TRAVEL_NEWSLETTER_SIGNUP_utm_or_page_path,
+    COALESCE(u2.registration_ts::DATE, u1.registration_ts::DATE) AS TRAVEL_NEWSLETTER_SIGNUP_DATE
+  FROM s_agg s
+  LEFT JOIN u_first_by_user u1 ON s.user_id = u1.user_id
+  LEFT JOIN u_first_by_anon u2 ON s.anonymous_id = u2.anonymous_id
+  WHERE COALESCE(u2.anonymous_id, u1.user_id) IS NOT NULL
+),
+
+travel_session_ids AS (
+  SELECT DISTINCT session_id
+  FROM travel
+),
+
+other AS (
+  SELECT
+    'Non-Travel_newsletter - Email/Push' AS segment,
+    s.*,
+    NULL AS TRAVEL_NEWSLETTER_SIGNUP_DRIVER_PAGE_URL,
+    NULL AS TRAVEL_NEWSLETTER_SIGNUP_UTM_CAMPAIGN,
+    NULL AS TRAVEL_NEWSLETTER_SIGNUP_utm_or_page_path,
+    NULL AS TRAVEL_NEWSLETTER_SIGNUP_DATE
+  FROM s_agg s
+  WHERE --s.utm_campaign ILIKE 'cc_crm%'
+    --AND 
+    NOT EXISTS (
+      SELECT 1
+      FROM travel_session_ids t
+      WHERE t.session_id = s.session_id
+    )
+)
+
+SELECT * FROM travel
+UNION ALL
+SELECT * FROM other
+
+-- Prequalify satrts and registrations
+WITH pv AS (
+  SELECT
+    PAGEVIEW_DT::date AS dt,
+    SESSION_ID,
+    ANONYMOUS_ID,
+    /* flags per row */
+    IFF(
+      (pageview_url_path ILIKE '%prequalify/credit-cards/%'
+       OR pageview_url_path ILIKE '%prequalify/m/credit-cards/%')
+      AND pageview_url_path NOT ILIKE '%results%',
+      1, 0
+    ) AS is_start_row,
+    IFF(
+      pageview_url_path ILIKE '%prequalify/credit-cards/%'
+      AND pageview_url_path ILIKE '%results%',
+      1, 0
+    ) AS is_complete_row
+  FROM NEXUS.PROD.F_PAGEVIEW
+  WHERE PAGEVIEW_DT >= '2025-06-01'
+),
+session_dt AS (
+  /* collapse to one row per session per dt */
+  SELECT
+    dt,
+    session_id,
+    /* pick a user_id if present in any row (optional) */
+    MAX(ANONYMOUS_ID) AS user_id,
+    MAX(is_start_row) AS has_start,
+    MAX(is_complete_row) AS has_complete
+  FROM pv
+  GROUP BY 1,2
+),
+regs AS (
+  SELECT
+    REGISTRATION_DT::date AS reg_dt,
+    SESSION_ID,
+    USER_ID
+  FROM NEXUS.PROD.F_REGISTRATION
+  WHERE DEPLOYABLE_NAME = 'prequalify'
+    AND driver_page_name = 'prequalify_credit-cards'
+    AND REGISTRATION_DT >= '2025-06-01'
+    AND REGISTRATION_DT < CURRENT_DATE - 1
+)
+SELECT
+  s.dt,
+  COUNT(DISTINCT IFF(s.has_start=1, s.session_id, NULL)) AS starts,
+    COUNT(DISTINCT IFF(s.has_start=1, s.user_id, NULL)) AS starts_users,
+  COUNT(DISTINCT IFF(s.has_complete=1, s.session_id, NULL)) AS completes,
+  COUNT(DISTINCT IFF(s.has_complete=1, s.user_id, NULL)) AS complete_users,
+  COUNT(DISTINCT r.session_id) AS registrations,
+  COUNT(DISTINCT r.user_id) AS registered_users,
+  (COUNT(DISTINCT r.session_id)::float / NULLIF(COUNT(DISTINCT IFF(s.has_start=1, s.session_id, NULL)), 0)) AS registration_rate
+FROM session_dt s
+LEFT JOIN regs r
+  ON s.session_id = r.session_id
+/* if you only want rows where there was a start, filter here */
+WHERE s.has_start = 1
+GROUP BY 1
+ORDER BY 1
+--Prequal Revenue
+select
+                              cc_sold.created_dt 
+                              ,sku.SKU_NAME
+                             -- ,imp.IMPRESSION_PAGE_URL
+                             -- ,imp.SKU_ID
+                             -- ,imp.SKU_IMPRESSION_ID
+                             -- ,imp.SKU_NAME
+                             -- ,imp.SKU_PRODUCT_TYPE
+                             -- ,imp.SKU_SOURCE
+                             ,cc_sold.partner_id
+                              ,cc_sold.offer_request_type 
+                              ,cc_sold.PARTNER_RULE_ID
+                              ,cc_sold.REQUEST_STATUS
+                              ,cc_sold.REQUEST_TYPE
+                              ,cc_sold.REVENUE_TYPE
+                              ,cc_sold.nexus_click_id
+                               ,cc_sold.MARKETPLACE_OFFER_ID
+                              ,cc_sold.NEXUS_IMPRESSION_ID
+                              ,cc_sold.sub_id1 
+                              ,cc_sold.sub_id2 
+                              ,cc_sold.sub_id3 
+                              ,cc_sold.sub_id9
+                              ,sf.SHOPPING_FINISH_ID nexus_sf
+                              ,sf.DEPLOYABLE_NAME
+                              ,app.SHOPPING_FINISH_ID app_id
+                              ,d.SHOPPING_FINISH_ID txn_id
+                              ,d.REVENUE_INGESTED
+                              ,cc_sold.anonymous_id
+                            from (
+                                    select
+                                    ld.anonymous_id
+                                    ,ld.created_at::date as created_dt
+                                    ,ls.lead_id
+                                    ,r1.partner_id
+                                    ,r1.type as offer_request_type
+                                    ,r1.PARTNER_RULE_ID
+                                    ,r1.REQUEST_STATUS
+                                    ,r1.REQUEST_TYPE
+                                    ,r1.REVENUE_TYPE
+                                    ,o.nexus_click_id
+                                    ,o.MARKETPLACE_OFFER_ID,
+                                    r1.NEXUS_IMPRESSION_ID
+                                    ,ld.sub_id1 
+                                    ,ld.sub_id2 
+                                    ,ld.sub_id3 
+                                    ,ld.sub_id9
+                                    ,max(r1.revenue_amount) as payout_amount
+                                    from LENDING_MART.PREQUALIFY_PROD.LEAD_SALE_DATA ls
+                                    inner join LENDING_MART.PREQUALIFY_PROD.OFFER_REQUEST_DATA r1 on ls.offer_request_id=r1.id
+                                    inner join LENDING_MART.PREQUALIFY_PROD.SRC_OFFER_REQUEST_CREDIT_CARD_OFFER_DATA o on o.offer_request_id = r1.id
+                                    left join LENDING_MART.PREQUALIFY_PROD.LEAD_DATA ld on ls.lead_id=ld.id
+                                    where 1=1
+                                    and r1.type = 'CREDIT_CARD'
+                                   -- and ld.sub_id1 = 'organic'
+                                   -- and ld.SUB_ID2 in ('/best/loans/personal-loans/best-bad-credit-loans','/best/loans/personal-loans/best-loans-for-bad-credit')
+                                  
+                                    group by all
+                                ) cc_sold
+              --  inner join NEXUS.PROD.F_SKU_IMPRESSION imp  on cc_sold.nexus_impression_id = imp.SKU_IMPRESSION_ID and SKU_IMPRESSION_DT >= '2025-07-23' and IMPRESSION_PAGE_URL ilike '%/prequalify/credit-cards/apply/results/%'
+                left join NEXUS.PROD.F_SHOPPING_FINISH sf on cc_sold.nexus_click_id = sf.SHOPPING_FINISH_ID and SHOPPING_FINISH_DT >= '2025-07-23'
+                left join NEXUS.PROD.D_SKU sku on cc_sold.MARKETPLACE_OFFER_ID = sku.SKU_ID and CURR_IN
+                 left join CARDS_MART.PROD.SHOPPING_FINISH_APPLICATION_PIPELINE app  on cc_sold.nexus_click_id = app.shopping_finish_id and app.f_application_in = 1
+                left join nexus.prod.F_AFFILIATE_TRANSACTION d on cc_sold.nexus_click_id = d.SHOPPING_FINISH_ID and d.REVENUE_INGESTED >0 and d.REVENUE_TRANSACTION_IN
+                            where 1=1
+
+                            group by all
+                            
+                            
+                            
