@@ -1,0 +1,667 @@
+--python:
+import numpy as np, pandas as pd
+from scipy import stats
+from statsmodels.stats.proportion import proportions_ztest
+from statsmodels.stats.weightstats import DescrStatsW, CompareMeans, ttest_ind
+from statsmodels.stats.multitest import multipletests
+
+
+ALPHA = 0.10
+MULT_COMP_METHOD = "holm"  # or "fdr_bh"
+
+# Functions
+def pick_baseline(variants):
+    return "control" if "control" in variants else sorted(variants)[0]
+
+def welch_ci(x, y, alpha=0.05):
+    cm = CompareMeans(DescrStatsW(y, ddof=1), DescrStatsW(x, ddof=1))
+    return cm.tconfint_diff(usevar="unequal", alpha=alpha)
+
+try:
+    from statsmodels.stats.proportion import confint_proportions_2indep
+    HAS_NEWCOMBE = True
+except Exception:
+    HAS_NEWCOMBE = False
+
+def safe_newcombe_diff(count1, nobs1, count2, nobs2, alpha=0.05):
+    if (nobs1 == 0) or (nobs2 == 0):
+        return (np.nan, np.nan)
+    p1 = count1 / nobs1
+    p2 = count2 / nobs2
+    if not (0 < p1 < 1 and 0 < p2 < 1):
+        return (np.nan, np.nan)
+    try:
+        return confint_proportions_2indep(count1, nobs1, count2, nobs2,
+                                          method="score", compare="diff", alpha=alpha)
+    except Exception:
+        return (np.nan, np.nan)
+
+# data load
+df_all     = datasets[1].copy()
+df_matched = datasets[0].copy()
+df_ctr     = datasets[2].copy()
+
+for data_frame in (df_all, df_matched, df_ctr):
+    if "EXPERIMENT_KEY" in data_frame.columns:
+        data_frame["EXPERIMENT_KEY"] = data_frame["EXPERIMENT_KEY"].astype(str).str.strip()
+    if "VARIATION_KEY" in data_frame.columns:
+        data_frame["VARIATION_KEY"]  = data_frame["VARIATION_KEY"].astype(str).str.strip()
+    if "EXPERIMENT_ITERATION" in data_frame.columns:
+        data_frame["EXPERIMENT_ITERATION"] = pd.to_numeric(data_frame["EXPERIMENT_ITERATION"], errors="coerce").fillna(-1).astype(int)
+    for col in ["MATCH_CT","EST_REV"]:
+        if col in data_frame.columns:
+            data_frame[col] = pd.to_numeric(data_frame[col], errors="coerce").fillna(0)
+
+#SUPERSET
+matched_user = (
+    df_matched.groupby(["EXPERIMENT_KEY","EXPERIMENT_ITERATION","VARIATION_KEY","ANONYMOUS_ID"], as_index=False)
+              [["MATCH_CT","EST_REV"]].sum()
+)
+
+all_users = (
+    df_all.groupby(["EXPERIMENT_KEY","EXPERIMENT_ITERATION","VARIATION_KEY","ANONYMOUS_ID"], as_index=False)
+          .size().rename(columns={"size":"user_flag"})
+)
+
+superset = (
+    all_users.merge(matched_user, how="left",
+        on=["EXPERIMENT_KEY","EXPERIMENT_ITERATION","VARIATION_KEY","ANONYMOUS_ID"])
+    .fillna({"MATCH_CT":0,"EST_REV":0})
+)
+
+rows = []
+
+# USERS MATCHED / PARTNER COUNT / REVENUE
+for (exp_key, exp_iter), sub in superset.groupby(["EXPERIMENT_KEY","EXPERIMENT_ITERATION"], sort=False):
+    variants = sorted(sub["VARIATION_KEY"].unique())
+    if len(variants) < 2:
+        continue
+    baseline = pick_baseline(variants)
+
+    # Users Matched Rate (proportion power, no SD) ---
+    sub = sub.copy()
+    sub["matched_flag"] = (sub["MATCH_CT"] > 0).astype(int)
+    counts = sub.groupby("VARIATION_KEY")["matched_flag"].agg(["sum","count"])
+
+    for var in variants:
+        if var == baseline: 
+            continue
+        k_ctrl, n_ctrl = int(counts.loc[baseline,"sum"]), int(counts.loc[baseline,"count"])
+        k_var,  n_var  = int(counts.loc[var,"sum"]),      int(counts.loc[var,"count"])
+        p_ctrl = k_ctrl / n_ctrl if n_ctrl > 0 else np.nan
+        p_var  = k_var  / n_var  if n_var  > 0 else np.nan
+        if (p_ctrl == 0) and (p_var == 0):
+            continue
+
+        z_val, pval = proportions_ztest([k_ctrl, k_var], [n_ctrl, n_var], alternative="two-sided")
+        lo, hi = (safe_newcombe_diff(k_var, n_var, k_ctrl, n_ctrl, alpha=ALPHA) if HAS_NEWCOMBE else (np.nan, np.nan))
+        diff = p_var - p_ctrl
+        pct_diff = np.nan if (p_ctrl in [0, np.nan]) else 100.0 * diff / p_ctrl
+
+        rows.append({
+            "EXPERIMENT_KEY": exp_key, "EXPERIMENT_ITERATION": exp_iter,
+            "METRIC": "Users Matched Rate",
+            "BASELINE": baseline, "VARIANT": var,
+            "BASELINE_VALUE": p_ctrl, "VARIANT_VALUE": p_var, 
+            "DIFFERENCE (Absolute)": diff, 
+            "PCT_DIFF": pct_diff,
+            "BASELINE_TOTAL": p_ctrl, "VARIANT_TOTAL": p_var,    
+            "PCT_DIFF_TOTAL": pct_diff,
+            "N_BASELINE": n_ctrl, "N_VARIANT": n_var,
+            "SD_BASELINE": np.nan, "SD_VARIANT": np.nan,         
+            "P_VALUE": float(pval),
+            "CI_LO": np.nan if np.isnan(lo) else float(lo),
+            "CI_HI": np.nan if np.isnan(hi) else float(hi),
+            "SIGNIFICANT": ((not np.isnan(lo)) and ((lo>0 and hi>0) or (lo<0 and hi<0))) or (pval < ALPHA)
+        })
+
+    # Continuous metrics (store SDs; needed for power)
+    for col, label in [("MATCH_CT","Partner Match Count"), ("EST_REV","Estimated Revenue")]:
+        for var in variants:
+            if var == baseline: 
+                continue
+            x = sub.loc[sub.VARIATION_KEY==baseline, col].astype(float)
+            y = sub.loc[sub.VARIATION_KEY==var,      col].astype(float)
+            mean_ctrl, mean_var = x.mean(), y.mean()
+            sd_ctrl, sd_var = x.std(ddof=1), y.std(ddof=1)
+            if (mean_ctrl == 0) and (mean_var == 0):
+                continue
+
+            if len(x) <= 1 or len(y) <= 1 or sd_ctrl == 0 or sd_var == 0:
+                pval, lo, hi = np.nan, np.nan, np.nan
+            else:
+                t_stat, pval, dummy_var = ttest_ind(y, x, usevar="unequal")
+                lo, hi  = welch_ci(x, y, alpha=ALPHA)
+
+            diff = mean_var - mean_ctrl
+            pct_diff = np.nan if (mean_ctrl in [0, np.nan]) else 100.0 * diff / mean_ctrl
+
+            rows.append({
+                "EXPERIMENT_KEY": exp_key, "EXPERIMENT_ITERATION": exp_iter,
+                "METRIC": label,
+                "BASELINE": baseline, "VARIANT": var,
+                "BASELINE_VALUE": mean_ctrl, "VARIANT_VALUE": mean_var, "DIFFERENCE (Absolute)": diff, "PCT_DIFF": pct_diff,
+                "BASELINE_TOTAL": float(x.sum()), "VARIANT_TOTAL": float(y.sum()),
+                "PCT_DIFF_TOTAL": np.nan if x.sum() in [0, np.nan] else 100.0 * (y.sum() - x.sum()) / x.sum(),
+                "N_BASELINE": int(len(x)), "N_VARIANT": int(len(y)),
+                "SD_BASELINE": float(sd_ctrl), "SD_VARIANT": float(sd_var),   
+                "P_VALUE": np.nan if pd.isna(pval) else float(pval),
+                "CI_LO": np.nan if pd.isna(lo) else float(lo), 
+                "CI_HI": np.nan if pd.isna(hi) else float(hi),
+                "SIGNIFICANT": ((not pd.isna(lo)) and ((lo>0 and hi>0) or (lo<0 and hi<0))) or ((not pd.isna(pval)) and pval < ALPHA)
+            })
+
+#CTR (proportion power, no SDs)
+for (exp_key, exp_iter), dfc in df_ctr.groupby(["EXPERIMENT_KEY","EXPERIMENT_ITERATION"], sort=False):
+    variants = sorted(dfc["VARIATION_KEY"].unique())
+    if len(variants) < 2:
+        continue
+    baseline = pick_baseline(variants)
+
+    agg = (dfc.groupby("VARIATION_KEY", as_index=True)
+              .agg(views=("SUM(A.FLOW_START_CT)", "sum"),
+                   clicks=("SUM(B.MATCH_LEAD_CT)", "sum")))
+    agg["non_clicks"] = agg["views"] - agg["clicks"]
+
+    for var in variants:
+        if var == baseline:
+            continue
+          
+        views_ctrl = int(agg.loc[baseline, "views"])
+        views_var  = int(agg.loc[var,      "views"])
+        clicks_ctrl = int(agg.loc[baseline, "clicks"])
+        clicks_var  = int(agg.loc[var,      "clicks"])
+
+        p_ctrl = clicks_ctrl / views_ctrl if views_ctrl > 0 else np.nan
+        p_var  = clicks_var  / views_var  if views_var  > 0 else np.nan
+        if (p_ctrl == 0) and (p_var == 0):
+            continue
+
+        table = np.array([
+            [clicks_ctrl, views_ctrl - clicks_ctrl],
+            [clicks_var,  views_var  - clicks_var ],
+        ], dtype=float)
+
+        # p-value: chi-squared unless zeros -> Fisher
+        if np.any(table == 0):
+            odds_ratio, pval = stats.fisher_exact(table, alternative="two-sided")
+        else:
+            chi2_stat, pval, degrees_f, expected_vals = stats.chi2_contingency(table, correction=False)
+
+        # diff in *rates*
+        diff_rate = p_var - p_ctrl
+        pct_diff_rate = np.nan if (p_ctrl in [0, np.nan]) else 100.0 * diff_rate / p_ctrl
+
+        # Newcombe CI in rate space (variant - control)
+        if HAS_NEWCOMBE:
+            lo_rate, hi_rate = safe_newcombe_diff(
+                clicks_var,  views_var,
+                clicks_ctrl, views_ctrl,
+                alpha=ALPHA
+            )
+        else:
+            lo_rate, hi_rate = (np.nan, np.nan)
+
+        # Not using anymore, but keeping for reference - using control's views as the reference scale
+        if not np.isnan(lo_rate):
+            ci_clicks_lo = float(views_ctrl * lo_rate)
+            ci_clicks_hi = float(views_ctrl * hi_rate)
+        else:
+            ci_clicks_lo = np.nan
+            ci_clicks_hi = np.nan
+
+        # Difference in click totals (variant - control)
+        diff_clicks = clicks_var - clicks_ctrl
+        pct_diff_clicks = (
+            np.nan if clicks_ctrl in [0, np.nan]
+            else 100.0 * diff_clicks / clicks_ctrl
+        )
+
+        rows.append({
+            "EXPERIMENT_KEY": exp_key,
+            "EXPERIMENT_ITERATION": exp_iter,
+            "METRIC": "Flow CVR",
+            "BASELINE": baseline,
+            "VARIANT": var,
+            "BASELINE_VALUE": p_ctrl,
+            "VARIANT_VALUE": p_var,
+            "DIFFERENCE (Absolute)": diff_rate,
+            "PCT_DIFF": pct_diff_rate,
+            # totals = clicks (not showing for end user), n = views
+            "BASELINE_TOTAL": p_ctrl,
+            "VARIANT_TOTAL": p_var,
+            "PCT_DIFF_TOTAL": diff_rate,
+            "N_BASELINE": views_ctrl,
+            "N_VARIANT": views_var,
+            "SD_BASELINE": np.nan,
+            "SD_VARIANT": np.nan,
+            "P_VALUE": float(pval),
+            "CI_LO": np.nan if np.isnan(lo_rate) else float(lo_rate),
+            "CI_HI": np.nan if np.isnan(hi_rate) else float(hi_rate),
+            "SIGNIFICANT": (
+                (not np.isnan(lo_rate) and ((lo_rate > 0 and hi_rate > 0) or (lo_rate < 0 and hi_rate < 0)))
+                or (pval < ALPHA)
+            ),
+        })
+
+# Final Summary --
+summary_df = pd.DataFrame(rows)
+summary_df = summary_df[~((summary_df["BASELINE_VALUE"]==0) & (summary_df["VARIANT_VALUE"]==0))].copy()
+
+def adjust_within_metric(group_data):
+    mask = group_data["P_VALUE"].notna()
+    if mask.any():
+        reject_flags, p_adj, val1, val2 = multipletests(group_data.loc[mask,"P_VALUE"].values, alpha=ALPHA, method=MULT_COMP_METHOD)
+        group_data.loc[mask, "P_VALUE_ADJ"] = p_adj
+        group_data.loc[mask, "SIGNIFICANT_ADJ"] = reject_flags
+    else:
+        group_data["P_VALUE_ADJ"] = np.nan
+        group_data["SIGNIFICANT_ADJ"] = False
+    return group_data
+
+summary_df = (
+    summary_df
+    .groupby(["EXPERIMENT_KEY","EXPERIMENT_ITERATION","METRIC"], as_index=False, group_keys=False)
+    .apply(adjust_within_metric)
+)
+
+# ----------------- NEW: required n per arm at 80% power, α=0.10 -----------------
+from statsmodels.stats.power import NormalIndPower, TTestIndPower
+from statsmodels.stats.proportion import proportion_effectsize
+
+norm_power = NormalIndPower()
+t_power    = TTestIndPower()
+
+def req_n_per_arm(row):
+    # proportions (Users Matched Rate, Flow CVR)
+    if row["METRIC"] in ("Users Matched Rate", "Flow CVR", "CTR"):
+        p0, p1 = row["BASELINE_VALUE"], row["VARIANT_VALUE"]
+        if pd.isna(p0) or pd.isna(p1) or not (0 < p0 < 1) or not (0 < p1 < 1) or p0 == p1:
+            return np.nan
+        es = proportion_effectsize(p0, p1)                     
+        n_req = norm_power.solve_power(effect_size=abs(es), power=0.80, alpha=ALPHA, alternative="two-sided")
+        return float(np.ceil(n_req))
+    # continuous (Partner Match Count, Estimated Revenue)
+    sd0, sd1 = row.get("SD_BASELINE", np.nan), row.get("SD_VARIANT", np.nan)
+    n0, n1 = row.get("N_BASELINE", np.nan), row.get("N_VARIANT", np.nan)
+    if pd.isna(sd0) or pd.isna(sd1) or (sd0 == 0 and sd1 == 0):
+        return np.nan
+    # pooled SD (robust enough for planning)
+    if n0 > 1 and n1 > 1 and not any(pd.isna([n0, n1])):
+        sp = np.sqrt(((n0-1)*(sd0**2) + (n1-1)*(sd1**2)) / max(n0+n1-2, 1))
+    else:
+        sp = np.sqrt((sd0**2 + sd1**2) / 2.0)
+    if sp == 0:
+        return np.nan
+    d = abs((row["VARIANT_VALUE"] - row["BASELINE_VALUE"]) / sp) # Cohen's d
+    if d == 0:
+        return np.nan
+    n_req = t_power.solve_power(effect_size=d, power=0.80, alpha=ALPHA, alternative="two-sided")
+    return float(np.ceil(n_req))
+
+summary_df["REQ_N_PER_ARM_80P_A0_1"] = summary_df.apply(req_n_per_arm, axis=1)
+summary_df["SUFF_BASELINE"] = (summary_df["N_BASELINE"] >= summary_df["REQ_N_PER_ARM_80P_A0_1"])
+summary_df["SUFF_VARIANT"]  = (summary_df["N_VARIANT"]  >= summary_df["REQ_N_PER_ARM_80P_A0_1"])
+summary_df["SUFF_BOTH"]     = summary_df["SUFF_BASELINE"] & summary_df["SUFF_VARIANT"]
+summary_df["REQ_N_PER_ARM_80P_A0_1"] = summary_df["REQ_N_PER_ARM_80P_A0_1"].astype(float).round(0)
+
+prop_power = NormalIndPower()
+t_power    = TTestIndPower()
+
+def req_n_for_fixed_mde(row):
+
+    # ---- RATE METRICS: Users Matched Rate, Flow CVR (pp MDEs) ----
+    if row["METRIC"] in ("Users Matched Rate", "Flow CVR", "CTR"):
+        p0 = row["BASELINE_VALUE"]
+        if pd.isna(p0) or not (0 < p0 < 1):
+            return pd.Series({"REQ_N_1pp": np.nan, "REQ_N_2pp": np.nan,
+                              "REQ_N_10pct": np.nan, "REQ_N_15pct": np.nan})
+
+        # MDEs: 1pp and 2pp (absolute)
+        p1_1pp = p0 + 0.01
+        p1_2pp = p0 + 0.02
+        p1_1pp = min(max(p1_1pp, 1e-6), 1 - 1e-6)
+        p1_2pp = min(max(p1_2pp, 1e-6), 1 - 1e-6)
+        es_1pp = proportion_effectsize(p0, p1_1pp)
+        es_2pp = proportion_effectsize(p0, p1_2pp)
+        n_1pp = np.ceil(prop_power.solve_power(effect_size=abs(es_1pp),
+                                               power=0.80, alpha=ALPHA))
+        n_2pp = np.ceil(prop_power.solve_power(effect_size=abs(es_2pp),
+                                               power=0.80, alpha=ALPHA))
+
+        return pd.Series({
+            "REQ_N_1pp": float(n_1pp),
+            "REQ_N_2pp": float(n_2pp),
+            "REQ_N_10pct": np.nan,
+            "REQ_N_15pct": np.nan,
+        })
+
+    # ---- CONTINUOUS METRICS: Match Count, Revenue (relative MDEs) ----
+    else:
+        mean0 = row["BASELINE_VALUE"]
+        sd0   = row["SD_BASELINE"]
+        n0    = row["N_BASELINE"]
+
+        if pd.isna(mean0) or pd.isna(sd0) or sd0 == 0:
+            return pd.Series({"REQ_N_1pp": np.nan, "REQ_N_2pp": np.nan,
+                              "REQ_N_10pct": np.nan, "REQ_N_15pct": np.nan})
+
+        # relative MDEs: +10%, +15%
+        d_10pct = abs((0.10 * mean0) / sd0)
+        d_15pct = abs((0.15 * mean0) / sd0)
+
+        n_10pct = np.ceil(t_power.solve_power(effect_size=d_10pct,
+                                              power=0.80, alpha=ALPHA))
+        n_15pct = np.ceil(t_power.solve_power(effect_size=d_15pct,
+                                              power=0.80, alpha=ALPHA))
+
+        return pd.Series({
+            "REQ_N_1pp": np.nan,
+            "REQ_N_2pp": np.nan,
+            "REQ_N_10pct": float(n_10pct),
+            "REQ_N_15pct": float(n_15pct),
+        })
+
+summary_df = pd.concat(
+    [summary_df, summary_df.apply(req_n_for_fixed_mde, axis=1)],
+    axis=1
+)
+
+# Round 
+for col in ["REQ_N_1pp","REQ_N_2pp","REQ_N_10pct","REQ_N_15pct"]:
+    if col in summary_df.columns:
+        summary_df[col] = summary_df[col].astype(float).round(0)
+
+
+---dataset2
+with EXPERIMENT_ANON_ID AS(
+select DATE
+    , EXPERIMENT_KEY
+    , VARIATION_KEY
+    , ANONYMOUS_ID
+    , EXPERIMENT_ITERATION
+FROM(
+select DATE(ORIGINAL_TIMESTAMP) AS DATE
+    , EXPERIMENT_KEY
+    , VARIATION_KEY
+    , ANONYMOUS_ID
+    , EXPERIMENT_ITERATION
+    , row_number() OVER(PARTITION BY ANONYMOUS_ID, EXPERIMENT_KEY, DATE(ORIGINAL_TIMESTAMP), EXPERIMENT_ITERATION ORDER BY ORIGINAL_TIMESTAMP DESC) as rnk
+from SHIBUYA_LANDZONE.RIA_ADVISOR_MATCH_PROD.ABSMARTLY_EXPERIMENT_BUCKETING_DECISION
+where DATE(ORIGINAL_TIMESTAMP) >= '2024-10-20'
+AND CONTEXT_LIBRARY_NAME = 'analytics.js'
+AND ANONYMOUS_ID <> 'anonymousId'
+GROUP BY 1,2,3,4,5,ORIGINAL_TIMESTAMP)
+WHERE rnk = 1
+),
+
+NWWP_MATCHED AS(
+SELECT DATE(ORIGINAL_TIMESTAMP) AS DATE
+    , ANONYMOUS_ID
+    , LEAD_PUBLIC_ID
+    , FUNNEL_NAME
+    , partner_matches
+    , UTM_CAMPAIGN
+    , UTM_MEDIUM
+    , UTM_SOURCE
+    , case when (UTM_MEDIUM like '%nerdwall%') OR (UTM_MEDIUM is not null and UTM_MEDIUM not in ('cpc', 'email') and UTM_SOURCE = 'nerdwallet-app') then 'house ad'
+            when UTM_SOURCE ILIKE '/%' OR UTM_SOURCE ILIKE '%/article/%' OR UTM_SOURCE ILIKE '%://%' OR UTM_SOURCE ilike '%best/%' then 'house ad'
+        else UTM_MEDIUM end as medium
+    , case when UTM_MEDIUM like '%nerdwall%' and UTM_SOURCE= 'nerdwallet-app' then UTM_SOURCE
+            when UTM_MEDIUM like '%nerdwall%' then UTM_MEDIUM
+            when UTM_SOURCE ILIKE '/%' OR UTM_SOURCE ILIKE '%/article/%' OR UTM_SOURCE ILIKE '%://%' OR UTM_SOURCE ilike '%best/%' then 'nerdwallet'
+            when UTM_SOURCE like '%email%' then NULL
+        else UTM_SOURCE end as source
+    , INVESTABLE_ASSETS_RANGE
+    , ANNUAL_INCOME
+    , AGE
+    , SUM(AVG_REVENUE_GENERATED) as EST_REVENUE
+    , SUM(NUMBER_OF_MATCHES) as MATCHED_CT
+FROM SHIBUYA_LANDZONE.RIA_ADVISOR_MATCH_PROD.PARTNERS_MATCHED A
+where DATE(ORIGINAL_TIMESTAMP) >= '2024-10-01'
+GROUP BY ALL
+),
+
+opportunity_state as(
+SELECT USER_ID
+    , ACTION
+    , IS_WON
+    , IS_LOST
+    , ORIGINAL_TIMESTAMP
+FROM SHIBUYA_LANDZONE.RIA_NERDWALLET_WEALTH_PARTNERS_PROD.OPPORTUNITY_UPDATED
+-- WHERE DATE(TIMESTAMP) >= '2025-09-01'
+GROUP BY ALL
+QUALIFY ROW_NUMBER() OVER(PARTITION BY USER_ID ORDER BY ORIGINAL_TIMESTAMP DESC) = 1
+)
+
+
+SELECT A.DATE
+    , B.EXPERIMENT_KEY
+    , B.EXPERIMENT_ITERATION
+    , B.VARIATION_KEY
+    , A.ANONYMOUS_ID
+    , A.LEAD_PUBLIC_ID
+    , FUNNEL_NAME
+    , CASE WHEN A.partner_matches like '%nerdwallet-wealth-partners%' THEN 'NWWP' ELSE 'Other' END AS NWWP_MATCHED
+    , A.UTM_CAMPAIGN
+    , A.UTM_MEDIUM
+    , A.UTM_SOURCE
+    , A.medium
+    , A.source
+    , CASE WHEN A.INVESTABLE_ASSETS_RANGE = 'UNDER_100K' THEN '1. UNDER_100K'
+        WHEN A.INVESTABLE_ASSETS_RANGE = 'FROM_100_TO_250K' THEN '2. FROM_100_TO_250K'
+        WHEN A.INVESTABLE_ASSETS_RANGE = 'FROM_250_TO_500K' THEN '3. FROM_250_TO_500K'
+        WHEN A.INVESTABLE_ASSETS_RANGE = 'FROM_500K_TO_1M' THEN '4. FROM_500K_TO_1M'
+        WHEN A.INVESTABLE_ASSETS_RANGE = 'OVER_1M' THEN '5. OVER_1M' 
+      ELSE NULL END AS INVESTABLE_ASSETS_RANGE
+    , CASE WHEN A.ANNUAL_INCOME < 100000 THEN '1. UNDER_100K'
+        WHEN A.ANNUAL_INCOME >= 100000 AND A.ANNUAL_INCOME < 250000 THEN '2. FROM_100_TO_250K'
+        WHEN A.ANNUAL_INCOME >= 250000 AND A.ANNUAL_INCOME < 500000 THEN '3. FROM_250_TO_500K'
+        WHEN A.ANNUAL_INCOME >= 500000 AND A.ANNUAL_INCOME < 1000000 THEN '4. FROM_500K_TO_1M'
+        WHEN A.ANNUAL_INCOME >= 1000000 THEN '5. OVER_1M' 
+      ELSE NULL END AS ANNUAL_INCOME_RANGE
+    , CASE WHEN A.AGE <= 25 THEN '1. 25_AND_UNDER'
+        WHEN A.AGE >= 26 AND A.AGE <= 40 THEN '2. FROM_26_TO_40'
+        WHEN A.AGE >= 41 AND A.AGE <= 52 THEN '3. FROM_41_TO_52'
+        WHEN A.AGE >= 53 AND A.AGE <= 60 THEN '4. FROM_53_TO_60'
+        WHEN A.AGE >= 61 AND A.AGE <= 70 THEN '5. FROM_61_TO_70'
+        WHEN A.AGE >= 71 THEN '6. OVER_71' 
+      ELSE NULL END AS AGE_BUCKET
+    , A.AGE
+    , D.ACTION
+    , D.IS_WON
+    , D.IS_LOST
+    , SUM(A.EST_REVENUE) AS EST_REV
+    , SUM(A.MATCHED_CT) AS MATCH_CT
+FROM NWWP_MATCHED A
+    LEFT OUTER JOIN EXPERIMENT_ANON_ID B
+ON A.ANONYMOUS_ID = B.ANONYMOUS_ID
+AND A.DATE = B.DATE
+    LEFT OUTER JOIN SHIBUYA_LANDZONE.RIA_NERDWALLET_WEALTH_PARTNERS_PROD.IDENTIFIES C
+ON (A.lead_public_id = C.public_id OR A.anonymous_id = c.anonymous_id)
+    LEFT OUTER JOIN opportunity_state D
+ON C.USER_ID = D.USER_ID
+WHERE B.VARIATION_KEY IS NOT NULL
+GROUP BY ALL;
+
+--dataset1
+with EXPERIMENT_ANON_ID AS(
+select DATE
+    , EXPERIMENT_KEY
+    , VARIATION_KEY
+    , ANONYMOUS_ID
+    , EXPERIMENT_ITERATION
+FROM(
+select DATE(ORIGINAL_TIMESTAMP) AS DATE
+    , EXPERIMENT_KEY
+    , VARIATION_KEY
+    , ANONYMOUS_ID
+    , EXPERIMENT_ITERATION
+    , row_number() OVER(PARTITION BY ANONYMOUS_ID, EXPERIMENT_KEY, DATE(ORIGINAL_TIMESTAMP), EXPERIMENT_ITERATION ORDER BY ORIGINAL_TIMESTAMP DESC) as rnk
+from SHIBUYA_LANDZONE.RIA_ADVISOR_MATCH_PROD.ABSMARTLY_EXPERIMENT_BUCKETING_DECISION
+where DATE(ORIGINAL_TIMESTAMP) >= '2024-10-20'
+AND CONTEXT_LIBRARY_NAME = 'analytics.js'
+AND ANONYMOUS_ID <> 'anonymousId'
+GROUP BY 1,2,3,4,5,ORIGINAL_TIMESTAMP)
+WHERE rnk = 1
+),
+
+NWWP_MATCHED AS(
+SELECT DATE(ORIGINAL_TIMESTAMP) AS DATE
+    , ANONYMOUS_ID
+    , LEAD_PUBLIC_ID
+    , FUNNEL_NAME
+    , partner_matches
+    , UTM_CAMPAIGN
+    , UTM_MEDIUM
+    , UTM_SOURCE
+    , case when (UTM_MEDIUM like '%nerdwall%') OR (UTM_MEDIUM is not null and UTM_MEDIUM not in ('cpc', 'email') and UTM_SOURCE = 'nerdwallet-app') then 'house ad'
+            when UTM_SOURCE ILIKE '/%' OR UTM_SOURCE ILIKE '%/article/%' OR UTM_SOURCE ILIKE '%://%' OR UTM_SOURCE ilike '%best/%' then 'house ad'
+        else UTM_MEDIUM end as medium
+    , case when UTM_MEDIUM like '%nerdwall%' and UTM_SOURCE= 'nerdwallet-app' then UTM_SOURCE
+            when UTM_MEDIUM like '%nerdwall%' then UTM_MEDIUM
+            when UTM_SOURCE ILIKE '/%' OR UTM_SOURCE ILIKE '%/article/%' OR UTM_SOURCE ILIKE '%://%' OR UTM_SOURCE ilike '%best/%' then 'nerdwallet'
+            when UTM_SOURCE like '%email%' then NULL
+        else UTM_SOURCE end as source
+    , INVESTABLE_ASSETS_RANGE
+    , ANNUAL_INCOME
+    , AGE
+    , SUM(AVG_REVENUE_GENERATED) as EST_REVENUE
+    , SUM(NUMBER_OF_MATCHES) as MATCHED_CT
+FROM SHIBUYA_LANDZONE.RIA_ADVISOR_MATCH_PROD.PARTNERS_MATCHED A
+where DATE(ORIGINAL_TIMESTAMP) >= '2024-10-01'
+GROUP BY ALL
+),
+
+opportunity_state as(
+SELECT USER_ID
+    , ACTION
+    , IS_WON
+    , IS_LOST
+    , ORIGINAL_TIMESTAMP
+FROM SHIBUYA_LANDZONE.RIA_NERDWALLET_WEALTH_PARTNERS_PROD.OPPORTUNITY_UPDATED
+-- WHERE DATE(TIMESTAMP) >= '2025-09-01'
+GROUP BY ALL
+QUALIFY ROW_NUMBER() OVER(PARTITION BY USER_ID ORDER BY ORIGINAL_TIMESTAMP DESC) = 1
+)
+
+
+SELECT A.DATE
+    , B.EXPERIMENT_KEY
+    , B.EXPERIMENT_ITERATION
+    , B.VARIATION_KEY
+    , A.ANONYMOUS_ID
+    , A.LEAD_PUBLIC_ID
+    , FUNNEL_NAME
+    , CASE WHEN A.partner_matches like '%nerdwallet-wealth-partners%' THEN 'NWWP' ELSE 'Other' END AS NWWP_MATCHED
+    , A.UTM_CAMPAIGN
+    , A.UTM_MEDIUM
+    , A.UTM_SOURCE
+    , A.medium
+    , A.source
+    , CASE WHEN A.INVESTABLE_ASSETS_RANGE = 'UNDER_100K' THEN '1. UNDER_100K'
+        WHEN A.INVESTABLE_ASSETS_RANGE = 'FROM_100_TO_250K' THEN '2. FROM_100_TO_250K'
+        WHEN A.INVESTABLE_ASSETS_RANGE = 'FROM_250_TO_500K' THEN '3. FROM_250_TO_500K'
+        WHEN A.INVESTABLE_ASSETS_RANGE = 'FROM_500K_TO_1M' THEN '4. FROM_500K_TO_1M'
+        WHEN A.INVESTABLE_ASSETS_RANGE = 'OVER_1M' THEN '5. OVER_1M' 
+      ELSE NULL END AS INVESTABLE_ASSETS_RANGE
+    , CASE WHEN A.ANNUAL_INCOME < 100000 THEN '1. UNDER_100K'
+        WHEN A.ANNUAL_INCOME >= 100000 AND A.ANNUAL_INCOME < 250000 THEN '2. FROM_100_TO_250K'
+        WHEN A.ANNUAL_INCOME >= 250000 AND A.ANNUAL_INCOME < 500000 THEN '3. FROM_250_TO_500K'
+        WHEN A.ANNUAL_INCOME >= 500000 AND A.ANNUAL_INCOME < 1000000 THEN '4. FROM_500K_TO_1M'
+        WHEN A.ANNUAL_INCOME >= 1000000 THEN '5. OVER_1M' 
+      ELSE NULL END AS ANNUAL_INCOME_RANGE
+    , CASE WHEN A.AGE <= 25 THEN '1. 25_AND_UNDER'
+        WHEN A.AGE >= 26 AND A.AGE <= 40 THEN '2. FROM_26_TO_40'
+        WHEN A.AGE >= 41 AND A.AGE <= 52 THEN '3. FROM_41_TO_52'
+        WHEN A.AGE >= 53 AND A.AGE <= 60 THEN '4. FROM_53_TO_60'
+        WHEN A.AGE >= 61 AND A.AGE <= 70 THEN '5. FROM_61_TO_70'
+        WHEN A.AGE >= 71 THEN '6. OVER_71' 
+      ELSE NULL END AS AGE_BUCKET
+    , A.AGE
+    , D.ACTION
+    , D.IS_WON
+    , D.IS_LOST
+    , SUM(A.EST_REVENUE) AS EST_REV
+    , SUM(A.MATCHED_CT) AS MATCH_CT
+FROM NWWP_MATCHED A
+    LEFT OUTER JOIN EXPERIMENT_ANON_ID B
+ON A.ANONYMOUS_ID = B.ANONYMOUS_ID
+AND A.DATE = B.DATE
+    LEFT OUTER JOIN SHIBUYA_LANDZONE.RIA_NERDWALLET_WEALTH_PARTNERS_PROD.IDENTIFIES C
+ON (A.lead_public_id = C.public_id OR A.anonymous_id = c.anonymous_id)
+    LEFT OUTER JOIN opportunity_state D
+ON C.USER_ID = D.USER_ID
+WHERE B.VARIATION_KEY IS NOT NULL
+GROUP BY ALL;
+
+--dataset3
+with EXPERIMENT_ANON_ID AS(
+select DATE
+    , EXPERIMENT_KEY
+    , VARIATION_KEY
+    , ANONYMOUS_ID
+    , EXPERIMENT_ITERATION
+FROM(
+select DATE(ORIGINAL_TIMESTAMP) AS DATE
+    , EXPERIMENT_KEY
+    , VARIATION_KEY
+    , ANONYMOUS_ID
+    , EXPERIMENT_ITERATION
+    , row_number() OVER(PARTITION BY ANONYMOUS_ID, EXPERIMENT_KEY, DATE(ORIGINAL_TIMESTAMP), EXPERIMENT_ITERATION ORDER BY ORIGINAL_TIMESTAMP DESC) as rnk
+from SHIBUYA_LANDZONE.RIA_ADVISOR_MATCH_PROD.ABSMARTLY_EXPERIMENT_BUCKETING_DECISION
+where DATE(ORIGINAL_TIMESTAMP) >= '2024-10-20'
+AND CONTEXT_LIBRARY_NAME = 'analytics.js'
+AND ANONYMOUS_ID <> 'anonymousId'
+GROUP BY 1,2,3,4,5,ORIGINAL_TIMESTAMP)
+WHERE rnk = 1
+),
+
+NWWP_MATCHED AS(
+SELECT DATE(ORIGINAL_TIMESTAMP) AS DATE
+    , B.EXPERIMENT_KEY
+    , B.EXPERIMENT_ITERATION
+    , B.VARIATION_KEY
+    , COUNT(A.ANONYMOUS_ID) as total_match_lead_ct
+    , COUNT(DISTINCT A.ANONYMOUS_ID) as match_lead_ct
+FROM SHIBUYA_LANDZONE.RIA_ADVISOR_MATCH_PROD.PARTNERS_MATCHED A
+  LEFT OUTER JOIN EXPERIMENT_ANON_ID B
+ON A.ANONYMOUS_ID = B.ANONYMOUS_ID
+AND DATE(A.ORIGINAL_TIMESTAMP) = B.DATE
+where DATE(ORIGINAL_TIMESTAMP) >= '2024-10-01'
+GROUP BY ALL
+),
+
+
+FLOW_START as(
+SELECT DATE(ORIGINAL_TIMESTAMP) as date
+    , B.EXPERIMENT_KEY
+    , B.EXPERIMENT_ITERATION
+    , B.VARIATION_KEY
+    , COUNT(A.anonymous_id) as total_flow_start_ct
+    , COUNT(DISTINCT A.anonymous_id) as flow_start_ct
+FROM SHIBUYA_LANDZONE.RIA_ADVISOR_MATCH_PROD.FLOW_STEP_VIEWED A
+  LEFT OUTER JOIN EXPERIMENT_ANON_ID B
+ON A.ANONYMOUS_ID = B.ANONYMOUS_ID
+AND DATE(A.ORIGINAL_TIMESTAMP) = B.DATE
+WHERE STEP = 'age'
+AND  DATE(ORIGINAL_TIMESTAMP) >= '2024-10-01'
+GROUP BY 1,2,3,4
+)
+
+
+SELECT A.DATE
+    , A.EXPERIMENT_KEY
+    , A.EXPERIMENT_ITERATION
+    , A.VARIATION_KEY
+    , sum(A.flow_start_ct)
+    , sum(B.match_lead_ct)
+FROM FLOW_START A
+    LEFT OUTER JOIN NWWP_MATCHED B
+ON A.DATE = B.DATE   
+AND A.EXPERIMENT_KEY = B.EXPERIMENT_KEY
+AND (case when A.EXPERIMENT_ITERATION IS NULL then '999' ELSE A.EXPERIMENT_ITERATION END) = (case when B.EXPERIMENT_ITERATION IS NULL then '999' ELSE B.EXPERIMENT_ITERATION END)
+AND  A.VARIATION_KEY = B.VARIATION_KEY
+WHERE A.VARIATION_KEY is not null
+GROUP BY ALL;
+
