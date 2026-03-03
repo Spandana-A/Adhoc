@@ -1,0 +1,110 @@
+WITH RAW_DATA AS (
+SELECT DISTINCT
+    AFFILIATE_PARTNER_NAME
+    , AFFILIATE_PRODUCT_NAME
+    , TRANSACTION_DATE
+    , DATE(txn.DW_CREATE_TS) AS CREATION_DATE
+    , sf.shopping_finish_dt as CLICK_DATE
+    , sf.shopping_finish_id
+    , sf.sku_id
+    , mkt.product_nm
+    , mkt.institution_nm
+    , REVENUE_INGESTED
+    , TRANSACTION_COUNT
+FROM 
+    nexus.prod_etl.f_affiliate_transaction txn
+INNER JOIN
+    nexus.prod.f_shopping_finish sf 
+        on txn.shopping_finish_id = sf.shopping_finish_id
+INNER JOIN
+    nexus.prod.d_marketplace mkt 
+        on sf.sku_id = mkt.offer_id
+        and mkt.curr_in=true
+        and mkt.active_in = true
+WHERE
+    -- '2025-05-01' BETWEEN DW_EFF_TS AND DW_EXPR_TS
+     revenue_transaction_in = TRUE
+    AND CLICK_DATE >= '2025-04-01'
+    AND TRANSACTION_DATE >= '2025-04-01'
+    AND DATA_INGESTION_VERTICAL = 'credit_card'
+-- GROUP BY ALL
+-- ORDER BY CREATION_DATE, REVENUE DESC
+
+),
+
+CLICK_DATE_VS_CREATION_DATE_AGGREGATES AS (
+SELECT
+    CLICK_DATE
+    , CREATION_DATE
+    , PRODUCT_NM
+    , INSTITUTION_NM
+    , DATEDIFF('DAY', CLICK_DATE,CREATION_DATE) AS DAYS_SINCE_CLICK
+    , SUM(REVENUE_INGESTED) AS REVENUE
+    , SUM(TRANSACTION_COUNT) AS TXNS
+    , SUM(REVENUE) OVER (PARTITION BY CLICK_DATE, PRODUCT_NM, INSTITUTION_NM ORDER BY CREATION_DATE) AS CUMULATIVE_REVENUE
+    , SUM(TXNS) OVER (PARTITION BY CLICK_DATE, PRODUCT_NM, INSTITUTION_NM ORDER BY CREATION_DATE) AS CUMULATIVE_TXNS
+FROM
+    RAW_DATA
+GROUP BY ALL
+ORDER BY
+    PRODUCT_NM
+    , CREATION_DATE
+),
+
+daily_totals as (
+SELECT 
+    SF.SHOPPING_FINISH_DT AS CLICK_DATE
+    , MKT.PRODUCT_NM
+    , MKT.INSTITUTION_NM
+    , SUM(TRANSACTION_COUNT) AS click_dts_total_txns
+    , SUM(REVENUE_INGESTED) AS click_dts_total_REVENUE
+FROM 
+    NEXUS.PROD.F_AFFILIATE_TRANSACTION TXN
+INNER JOIN
+    nexus.prod.d_marketplace mkt 
+        on TXN.sku_id = mkt.offer_id
+        and mkt.curr_in=true
+        and mkt.active_in = true
+INNER JOIN
+    nexus.prod.F_SHOPPING_FINISH SF
+        on TXN.SHOPPING_FINISH_ID=SF.SHOPPING_FINISH_ID
+WHERE 
+    CLICK_DATE >= '2025-04-01'
+    AND REVENUE_TRANSACTION_IN=TRUE
+    AND DATA_INGESTION_VERTICAL = 'credit_card'
+GROUP BY ALL
+),
+
+agg_data as (
+SELECT 
+    agg.click_date
+    , agg.creation_date
+    , agg.product_nm
+    , agg.institution_nm
+    , days_since_click
+    , CASE WHEN round(DIV0(cumulative_revenue,click_dts_total_REVENUE)*100,0) > 100 THEN 100
+        ELSE round(DIV0(cumulative_revenue,click_dts_total_REVENUE)*100,0)
+        END AS revenue_completion_perc
+    , CASE WHEN round(DIV0(cumulative_txns,click_dts_total_txns)*100,0) > 100 then 100 
+        ELSE round(DIV0(cumulative_txns,click_dts_total_txns)*100,0)
+        END  AS txn_completion_perc
+    , click_dts_total_REVENUE
+    , click_dts_total_txns
+    , cumulative_revenue
+    , cumulative_txns
+FROM 
+    CLICK_DATE_VS_CREATION_DATE_AGGREGATES agg
+left join
+    daily_totals 
+        on agg.click_date = daily_totals.click_date
+        and agg.product_nm = daily_totals.product_nm
+        and agg.institution_nm = daily_totals.institution_nm
+order by 
+    INSTITUTION_NM
+    , PRODUCT_NM
+    , CLICK_DATE
+    , CREATION_DATE
+)
+
+select * from agg_data
+where days_since_click > 0
