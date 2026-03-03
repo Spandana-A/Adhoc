@@ -1,0 +1,1381 @@
+--CPAs
+select DISTINCT 
+-- ISSUER
+-- CARD_NAME
+-- , PARTNER_CARD_NAME
+-- , CPAs.MARKETPLACE_ID
+-- , CURRENT_MONTH_TIER
+ mkt.PRODUCT_NM 
+, mkt.PRODUCT_ID
+, CAST(REPLACE(REPLACE(CURRENT_MONTH,'$',''),',','') AS INT) AS EXPECTED_CPA
+from PROD_RAW.GOOGLESHEET.CC_CPA_TRACKER cpas
+LEFT JOIN nexus.prod.D_MARKETPLACE mkt
+ON cpas.MARKETPLACE_ID=MKT.MARKETPLACE_ID 
+  AND MKT.CURR_IN=TRUE
+WHERE DOMAIN ilike 'NerdWallet'
+
+--cConv
+SET (target_date_start, target_date_end)= (CURRENT_DATE()-30, CURRENT_DATE() );
+SET (start_date, end_date)= (current_date()-180, current_date()-1);
+
+with click_ids AS (
+
+  select SHOPPING_FINISH_DT as CLICK_DATE
+    , REPLACE(fa2.IMPRESSION_PAGE_URL,'https://www.nerdwallet.com/','') as URL_PATH_TX
+    , fa1.DEVICE_TYPE AS DEVICE_TYPE_NM
+    , fa2.IMPRESSION_SECTION AS SECTION_NM
+    , fa2.SKU_ID AS MARKETPLACE_OFFER_ID
+    , SHOPPING_FINISH_ID
+ from NEXUS.PROD.F_SHOPPING_FINISH FA2
+ left join NEXUS.PROD.F_SKU_IMPRESSION fa1
+  on fa2.SKU_IMPRESSION_ID = fa1.SKU_IMPRESSION_ID
+ where URL_PATH_TX  ILIKE '%best/credit-cards/%'
+ and fa2.MONETIZABLE = 'yes_assumed'
+ and SECTION_NM in ('roundup_summary_table','roundup_recommendations')
+ and fa2.SHOPPING_FINISH_DT between $start_date and $end_date
+ and fa1.device_type in ('desktop','mobile')
+  ),
+
+
+  
+txn_ids as (
+select click_ids.*
+, fa3.TRANSACTION_ID as txn_id
+, fa3.revenue_ingested as commission
+, fa3.TRANSACTION_COUNT 
+from click_ids
+left join nexus.prod.f_affiliate_transaction fa3
+    on click_ids.shopping_finish_id = fa3.shopping_finish_id
+    and fa3.revenue_ingested > 0 
+    and fa3.TRANSACTION_DATE >= $start_date
+    AND FA3.REVENUE_TRANSACTION_IN = TRUE
+),
+
+
+recent_cConv as (
+select click_date 
+    , url_path_Tx
+    , device_type_nm
+    , section_nm
+    , marketplace_offer_id
+    , MKT.PRODUCT_NM
+    , count(distinct shopping_finish_id) as mClicks
+    , COALESCE(sum(transaction_count),0) as txns
+    -- , count(distinct txn_id) as txns
+    , sum(commission) as commission
+    , div0(txns, mclicks) as cConv
+    -- , div0(transactions, mclicks) as cConv_2
+from txn_ids
+LEFT JOIN NEXUS.PROD.D_MARKETPLACE mkt
+ON txn_ids.MARKETPLACE_OFFER_ID=MKT.OFFER_ID 
+  AND MKT.CURR_IN=TRUE
+//  AND MKT.ACTIVE_IN=TRUE
+group by 1,2,3,4,5,6
+),
+
+
+cConv_0 as (
+select * from recent_cconv
+-- UNION
+-- select * from  cards_mart_workspace.pbansal.cc_pulkit_sequencing_historical_cconv
+  -- where url_path_tx not in ('best/credit-cards/zero-percent','best/credit-cards/no-annual-fee','best/credit-cards/bad-credit','best/credit-cards/no-credit', 'best/credit-cards/no-foreign-transaction-fee')
+),
+
+CCONV AS (
+select cConv_0.*
+  , mkt.PRODUCT_ID
+  , case when cConv_0.marketplace_offer_id = '2335a130-28eb-4df3-9129-4194f1aeec2f' and click_date < '2023-11-14' then 0 -- the date the significant change to the BankAmericard offer was made
+     when cconv_0.marketplace_offer_id = '4528cd20-add2-11eb-b8c6-230f8597051d' then 0 -- exlucde Apple
+     when click_date between '2024-07-24' and '2024-08-01' then 0 -- data issue.
+     when url_path_tx in ('best/credit-cards/zero-percent','best/credit-cards/no-annual-fee','best/credit-cards/bad-credit','best/credit-cards/no-credit', 'best/credit-cards/no-foreign-transaction-fee')
+         and click_date < current_date()-180 then 0
+      else 1
+      end as valid_data
+from cConv_0
+LEFT JOIN NEXUS.PROD.D_MARKETPLACE mkt
+ON cConv_0.MARKETPLACE_OFFER_ID=MKT.OFFER_ID 
+  AND MKT.CURR_IN=TRUE
+where url_path_tx in ('best/credit-cards/balance-transfer','best/credit-cards/cash-back','best/credit-cards/bonus-offers',
+                      'best/credit-cards/low-interest','best/credit-cards/rewards','best/credit-cards/travel', 'best/credit-cards/no-foreign-transaction-fee',
+                      'best/credit-cards/airline', 'best/credit-cards/groceries', 'best/credit-cards/gas','best/credit-cards/american-express-cards',
+                      'best/credit-cards/zero-percent','best/credit-cards/no-annual-fee','best/credit-cards/bad-credit','best/credit-cards/no-credit'
+                      )
+  and valid_data = 1
+order by 1 desc
+),
+
+
+T1 AS (
+      SELECT
+      date(dw_eff_dt) as DW_EFF_DT,
+      DAYNAME(DW_EFF_DT) AS DAY,
+      CASE WHEN DATEDIFF(day,DW_EFF_DT,current_date())<=20 then 1 else 0 end as within_outlier_calc_period,
+      'Credit Cards' AS vertical,
+      aflt_partner_nm,
+      MARKETPLACE_PROD_ID,
+      sum(TXN_CNT) AS ALL_TXNS, -- ALL TXNS (NON - PFP INCLUDED)
+      SUM(ingested_txn_cnt) AS REV_TXNS, -- PFP ACCOUNTED TXNS
+      SUM(ingested_commission_am) AS revenue
+      FROM "PROD_ETL"."ATARI_FORKLIFT"."IMPACT_NEW_CAPITAL_ONE_CREDIT_CARDS"
+      WHERE DW_EFF_DT >= $target_date_start
+      and DW_EFF_DT <= $target_date_end
+      AND ingested_revenue_tran_in = TRUE
+      AND (lower(category) not ilike '%spark%' OR lower(category) IS NULL)
+      GROUP BY 1,2,3,4,5,6
+
+      UNION ALL
+
+      SELECT
+      date(dw_eff_dt) as DW_EFF_DT,
+      DAYNAME(DW_EFF_DT) AS DAY,
+      CASE WHEN DATEDIFF(day,DW_EFF_DT,current_date())<=20 then 1 else 0 end as within_outlier_calc_period,
+      'Credit Cards' AS vertical,
+      aflt_partner_nm,
+      MARKETPLACE_PROD_ID,
+      sum(TXN_CT) AS ALL_TXNS, -- SAME AS INGESTED TXNS FOR NON-CAPONE PRODUCTS
+      SUM(txn_ct) AS REV_TXNS,
+      SUM(ingested_commission_am) AS revenue
+      FROM "PROD_ETL"."ATARI_FORKLIFT"."F_ATARI_CC"
+      WHERE DW_EFF_DT >= $target_date_start
+      and DW_EFF_DT <= $target_date_end
+      AND revenue_tran_in = TRUE
+      AND aflt_partner_nm NOT IN ('capital_one_credit_cards')
+      GROUP BY 1,2,3,4,5,6
+      order by aflt_partner_nm, DW_EFF_DT),
+
+      -- CALCULATE OUTLIER DATES FOR EACH PARTNER PRODUCT
+      T2 AS (
+      SELECT * FROM (
+        SELECT *
+          , AVG(REV_TXNS) OVER (PARTITION BY AFLT_PARTNER_NM, MARKETPLACE_PROD_ID, within_outlier_calc_period ) AS AVG_TXNS
+          , STDDEV(REV_TXNS) OVER (PARTITION BY AFLT_PARTNER_NM,  MARKETPLACE_PROD_ID, within_outlier_calc_period) AS STDDEV_TXNS
+          , CASE
+          WHEN DAY IN ('Sat','Sun') THEN FLOOR((AVG_TXNS - 0.4*STDDEV_TXNS)) -- WEEKENDS WILL HAVE A LOWER TXNS THRESHOLD THAN WEEKDAYS (2 STDDEVS VS 1 STDDEV)
+          ELSE FLOOR((AVG_TXNS - 0.1*STDDEV_TXNS))
+          END AS THRESHOLD
+          , CASE
+          WHEN REV_TXNS < THRESHOLD THEN 1
+          ELSE 0
+          END AS OUTLIER
+        FROM T1
+        order by aflt_partner_nm, DW_EFF_DT
+        )
+        WHERE THRESHOLD IS NOT NULL
+      ),
+
+      --LAST COMPLETE DAY OF DATA FOR EACH PARTNER PRODUCT
+      -- We search for the maximum non-outlier date
+      LAST_COMPLETE_DATE_0 AS (
+      SELECT DISTINCT AFLT_PARTNER_NM
+      , MARKETPLACE_PROD_ID
+      , MIN(DW_EFF_DT) OVER (PARTITION BY AFLT_PARTNER_NM, MARKETPLACE_PROD_ID) AS FIRST_COMPLETE_DAY
+      , MAX(DW_EFF_DT) OVER (PARTITION BY AFLT_PARTNER_NM, MARKETPLACE_PROD_ID) AS LAST_COMPLETE_DAY
+      FROM T2
+      WHERE OUTLIER = 0
+      -- and THRESHOLD is not null
+      AND MARKETPLACE_PROD_ID IS NOT NULL
+      ),
+      
+      LAST_COMPLETE_DATE AS (
+        select * 
+        from (
+          select *
+            , row_number() over (partition by marketplace_prod_id order by last_complete_day desc) as rn
+          from LAST_COMPLETE_DATE_0
+            ) lcd 
+         where lcd.rn=1
+        order by marketplace_prod_id
+        ),
+        
+SERP_RANK AS (
+SELECT DISTINCT DW_EFF_DT
+      ,SUM(SERP_IMPRESSION_CT) as impressions 
+      , SUM(SERP_CLICK_CT) as clicks 
+      , SUM(SERP_RANK * SERP_IMPRESSION_CT) / SUM(SERP_IMPRESSION_CT) as weighted_avg_rank 
+FROM SEO_MART.PROD.ORGANIC_GROWTH_DRILLDOWN 
+WHERE DW_EFF_DT >= current_date() - 700
+ AND PAGE_PATH_TX = 'best/credit-cards/airline'
+ AND SERP_IMPRESSION_CT >0
+group by 1
+)
+        
+SELECT CCONV.*
+    , SERP_RANK.weighted_avg_rank
+    , LCD.LAST_COMPLETE_DAY
+    , row_number() over (partition by URL_PATH_TX, DEVICE_TYPE_NM, SECTION_NM, PRODUCT_ID, MARKETPLACE_OFFER_ID ORDER BY CLICK_DATE ASC) AS cconv_recency_weight
+  FROM CCONV
+  LEFT JOIN LAST_COMPLETE_DATE LCD 
+    ON CCONV.PRODUCT_ID = LCD.MARKETPLACE_PROD_ID
+  LEFT JOIN SERP_RANK 
+    ON CCONV.CLICK_DATE = SERP_RANK.DW_EFF_DT
+  WHERE CCONV.CLICK_DATE < (LCD.LAST_COMPLETE_DAY-1)
+ORDER BY 1 DESC
+
+--cconv_2
+SET (target_date_start, target_date_end)= (CURRENT_DATE()-30, CURRENT_DATE() );
+SET (start_date, end_date)= (current_date()-700, current_date()-1);
+
+with click_ids AS (
+
+ select SHOPPING_FINISH_DT as CLICK_DATE
+    , REPLACE(fa2.IMPRESSION_PAGE_URL,'https://www.nerdwallet.com/','') as URL_PATH_TX
+    , fa1.DEVICE_TYPE AS DEVICE_TYPE_NM
+    , fa2.IMPRESSION_SECTION AS SECTION_NM
+    , fa2.SKU_ID AS MARKETPLACE_OFFER_ID
+    , SHOPPING_FINISH_ID
+    , fp.PAGEVIEW_URL_PATH 
+    , fp.GEO_CITY_NAME 
+    , fp.GEO_REGION_NAME 
+    , fp.MARKETING_REGION_NAME
+ from NEXUS.PROD.F_SHOPPING_FINISH FA2
+ left join NEXUS.PROD.F_SKU_IMPRESSION fa1
+  on fa2.SKU_IMPRESSION_ID = fa1.SKU_IMPRESSION_ID
+ left join nexus.prod.f_pageview fp
+    on fa2.IMPRESSION_PAGEVIEW_ID=fp.PAGEVIEW_ID 
+      and PAGEVIEW_DT between $start_date and $end_date
+-- where URL_PATH_TX  ILIKE '%best/credit-cards/airline%%'
+ where URL_PATH_TX  IN ('best/credit-cards/airline','best/credit-cards/rewards')
+ and fa2.MONETIZABLE = 'yes_assumed'
+ and SECTION_NM in ('roundup_summary_table','roundup_recommendations')
+ and fa2.SHOPPING_FINISH_DT between $start_date and $end_date
+ and fa1.device_type in ('desktop','mobile')
+  ),
+  
+txn_ids as (
+select click_ids.*
+, fa3.TRANSACTION_ID as txn_id
+, fa3.revenue_ingested as commission
+, fa3.TRANSACTION_COUNT 
+from click_ids
+left join nexus.prod.f_affiliate_transaction fa3
+    on click_ids.shopping_finish_id = fa3.shopping_finish_id
+    and fa3.revenue_ingested > 0 
+    and fa3.TRANSACTION_DATE >= $start_date
+    AND FA3.REVENUE_TRANSACTION_IN = TRUE
+),
+
+
+recent_cConv as (
+select click_date 
+    , url_path_Tx
+    , device_type_nm
+    , GEO_CITY_NAME 
+    , GEO_REGION_NAME 
+    , MARKETING_REGION_NAME
+    , section_nm
+    , marketplace_offer_id
+    , MKT.PRODUCT_NM
+    , count(distinct shopping_finish_id) as mClicks
+    , COALESCE(sum(transaction_count),0) as txns
+    -- , count(distinct txn_id) as txns
+    , sum(commission) as commission
+    -- , div0(txns, mclicks) as cConv
+    -- , div0(transactions, mclicks) as cConv_2
+from txn_ids
+LEFT JOIN NEXUS.PROD.D_MARKETPLACE mkt
+ON txn_ids.MARKETPLACE_OFFER_ID=MKT.OFFER_ID 
+  AND MKT.CURR_IN=TRUE
+//  AND MKT.ACTIVE_IN=TRUE
+group by all
+),
+
+
+cConv_0 as (
+select * from recent_cconv
+-- UNION
+-- select * from  cards_mart_workspace.pbansal.cc_pulkit_sequencing_historical_cconv
+  -- where url_path_tx not in ('best/credit-cards/zero-percent','best/credit-cards/no-annual-fee','best/credit-cards/bad-credit','best/credit-cards/no-credit', 'best/credit-cards/no-foreign-transaction-fee')
+),
+
+CCONV AS (
+select cConv_0.*
+  , mkt.PRODUCT_ID
+  , case when cConv_0.marketplace_offer_id = '2335a130-28eb-4df3-9129-4194f1aeec2f' and click_date < '2023-11-14' then 0 -- the date the significant change to the BankAmericard offer was made
+     when cconv_0.marketplace_offer_id = '4528cd20-add2-11eb-b8c6-230f8597051d' then 0 -- exlucde Apple
+     when click_date between '2024-07-24' and '2024-08-01' then 0 -- data issue.
+     when url_path_tx in ('best/credit-cards/zero-percent','best/credit-cards/no-annual-fee','best/credit-cards/bad-credit','best/credit-cards/no-credit', 'best/credit-cards/no-foreign-transaction-fee')
+         and click_date < current_date()-180 then 0
+      else 1
+      end as valid_data
+from cConv_0
+LEFT JOIN NEXUS.PROD.D_MARKETPLACE mkt
+ON cConv_0.MARKETPLACE_OFFER_ID=MKT.OFFER_ID 
+  AND MKT.CURR_IN=TRUE
+where url_path_tx in ('best/credit-cards/balance-transfer','best/credit-cards/cash-back','best/credit-cards/bonus-offers',
+                      'best/credit-cards/low-interest','best/credit-cards/rewards','best/credit-cards/travel', 'best/credit-cards/no-foreign-transaction-fee',
+                      'best/credit-cards/airline', 'best/credit-cards/groceries', 'best/credit-cards/gas','best/credit-cards/american-express-cards',
+                      'best/credit-cards/zero-percent','best/credit-cards/no-annual-fee','best/credit-cards/bad-credit','best/credit-cards/no-credit'
+                      )
+  and valid_data = 1
+order by 1 desc
+),
+
+
+T1 AS (
+      SELECT
+      date(dw_eff_dt) as DW_EFF_DT,
+      DAYNAME(DW_EFF_DT) AS DAY,
+      CASE WHEN DATEDIFF(day,DW_EFF_DT,current_date())<=20 then 1 else 0 end as within_outlier_calc_period,
+      'Credit Cards' AS vertical,
+      aflt_partner_nm,
+      MARKETPLACE_PROD_ID,
+      sum(TXN_CNT) AS ALL_TXNS, -- ALL TXNS (NON - PFP INCLUDED)
+      SUM(ingested_txn_cnt) AS REV_TXNS, -- PFP ACCOUNTED TXNS
+      SUM(ingested_commission_am) AS revenue
+      FROM "PROD_ETL"."ATARI_FORKLIFT"."IMPACT_NEW_CAPITAL_ONE_CREDIT_CARDS"
+      WHERE DW_EFF_DT >= $target_date_start
+      and DW_EFF_DT <= $target_date_end
+      AND ingested_revenue_tran_in = TRUE
+      AND (lower(category) not ilike '%spark%' OR lower(category) IS NULL)
+      GROUP BY 1,2,3,4,5,6
+
+      UNION ALL
+
+      SELECT
+      date(dw_eff_dt) as DW_EFF_DT,
+      DAYNAME(DW_EFF_DT) AS DAY,
+      CASE WHEN DATEDIFF(day,DW_EFF_DT,current_date())<=20 then 1 else 0 end as within_outlier_calc_period,
+      'Credit Cards' AS vertical,
+      aflt_partner_nm,
+      MARKETPLACE_PROD_ID,
+      sum(TXN_CT) AS ALL_TXNS, -- SAME AS INGESTED TXNS FOR NON-CAPONE PRODUCTS
+      SUM(txn_ct) AS REV_TXNS,
+      SUM(ingested_commission_am) AS revenue
+      FROM "PROD_ETL"."ATARI_FORKLIFT"."F_ATARI_CC"
+      WHERE DW_EFF_DT >= $target_date_start
+      and DW_EFF_DT <= $target_date_end
+      AND revenue_tran_in = TRUE
+      AND aflt_partner_nm NOT IN ('capital_one_credit_cards')
+      GROUP BY 1,2,3,4,5,6
+      order by aflt_partner_nm, DW_EFF_DT),
+
+      -- CALCULATE OUTLIER DATES FOR EACH PARTNER PRODUCT
+      T2 AS (
+      SELECT * FROM (
+        SELECT *
+          , AVG(REV_TXNS) OVER (PARTITION BY AFLT_PARTNER_NM, MARKETPLACE_PROD_ID, within_outlier_calc_period ) AS AVG_TXNS
+          , STDDEV(REV_TXNS) OVER (PARTITION BY AFLT_PARTNER_NM,  MARKETPLACE_PROD_ID, within_outlier_calc_period) AS STDDEV_TXNS
+          , CASE
+          WHEN DAY IN ('Sat','Sun') THEN FLOOR((AVG_TXNS - 0.4*STDDEV_TXNS)) -- WEEKENDS WILL HAVE A LOWER TXNS THRESHOLD THAN WEEKDAYS (2 STDDEVS VS 1 STDDEV)
+          ELSE FLOOR((AVG_TXNS - 0.1*STDDEV_TXNS))
+          END AS THRESHOLD
+          , CASE
+          WHEN REV_TXNS < THRESHOLD THEN 1
+          ELSE 0
+          END AS OUTLIER
+        FROM T1
+        order by aflt_partner_nm, DW_EFF_DT
+        )
+        WHERE THRESHOLD IS NOT NULL
+      ),
+
+      --LAST COMPLETE DAY OF DATA FOR EACH PARTNER PRODUCT
+      -- We search for the maximum non-outlier date
+      LAST_COMPLETE_DATE_0 AS (
+      SELECT DISTINCT AFLT_PARTNER_NM
+      , MARKETPLACE_PROD_ID
+      , MIN(DW_EFF_DT) OVER (PARTITION BY AFLT_PARTNER_NM, MARKETPLACE_PROD_ID) AS FIRST_COMPLETE_DAY
+      , MAX(DW_EFF_DT) OVER (PARTITION BY AFLT_PARTNER_NM, MARKETPLACE_PROD_ID) AS LAST_COMPLETE_DAY
+      FROM T2
+      WHERE OUTLIER = 0
+      -- and THRESHOLD is not null
+      AND MARKETPLACE_PROD_ID IS NOT NULL
+      ),
+      
+      LAST_COMPLETE_DATE AS (
+        select * 
+        from (
+          select *
+            , row_number() over (partition by marketplace_prod_id order by last_complete_day desc) as rn
+          from LAST_COMPLETE_DATE_0
+            ) lcd 
+         where lcd.rn=1
+        order by marketplace_prod_id
+        ),
+        
+SERP_RANK AS (
+SELECT DISTINCT DW_EFF_DT
+      , PAGE_PATH_TX
+      , DEVICE_TYPE
+      ,SUM(SERP_IMPRESSION_CT) as impressions 
+      , SUM(SERP_CLICK_CT) as clicks 
+      , SUM(SERP_RANK * SERP_IMPRESSION_CT) / SUM(SERP_IMPRESSION_CT) as weighted_avg_rank 
+      , row_number() over (PARTITION BY PAGE_PATH_TX, DEVICE_TYPE ORDER by DW_EFF_DT DESC) as rn
+FROM SEO_MART.PROD.ORGANIC_GROWTH_DRILLDOWN 
+WHERE DW_EFF_DT >= current_date() - 700
+ AND PAGE_PATH_TX in ('best/credit-cards/airline','best/credit-cards/rewards')
+ AND SERP_IMPRESSION_CT >0
+group by 1,2,3
+)
+        
+SELECT CCONV.*
+    , concat(GEO_REGION_NAME ,'-', GEO_CITY_NAME) as GEO_CITY_CODE
+    , SERP_RANK.weighted_avg_rank
+    , LCD.LAST_COMPLETE_DAY
+    , row_number() over (partition by URL_PATH_TX, DEVICE_TYPE_NM, SECTION_NM, PRODUCT_ID, MARKETPLACE_OFFER_ID ORDER BY CLICK_DATE ASC) AS cconv_recency_weight
+  FROM CCONV
+  LEFT JOIN LAST_COMPLETE_DATE LCD 
+    ON CCONV.PRODUCT_ID = LCD.MARKETPLACE_PROD_ID
+  LEFT JOIN SERP_RANK 
+    ON CCONV.CLICK_DATE = SERP_RANK.DW_EFF_DT
+      AND CCONV.URL_PATH_TX = SERP_RANK.PAGE_PATH_TX 
+      AND CCONV.DEVICE_TYPE_NM = SERP_RANK.DEVICE_TYPE
+  WHERE CCONV.CLICK_DATE < (LCD.LAST_COMPLETE_DAY-2)
+ORDER BY 1 DESC
+
+--geo mapping
+    
+  select distinct   fp.GEO_POSTAL_CODE
+     , fp.GEO_CITY_NAME 
+    , fp.GEO_REGION_NAME 
+    , fp.MARKETING_REGION_NAME
+    , fp.GEO_COUNTRY_CODE
+    , concat(GEO_REGION_NAME ,'-', GEO_CITY_NAME) as GEO_CITY_CODE
+  from nexus.prod.f_pageview fp
+  where PAGEVIEW_DT >= current_date() - 180
+  and GEO_COUNTRY_CODE='US'
+
+--PRODUCT AGNOSTIC CTR
+-- Declaring time period variables
+SET (start_date, end_date)= (current_date()-180,CURRENT_DATE() );
+
+WITH CC_PRODUCTS AS (
+    SELECT DISTINCT PRODUCT_NM 
+      , OFFER_ID 
+      , MARKETPLACE_ID 
+      , PRODUCT_ID 
+      , INSTITUTION_NM
+    FROM NEXUS.PROD.D_MARKETPLACE 
+    WHERE PRODUCT_TYPE_NM = 'credit_cards'
+      AND ACTIVE_IN=TRUE 
+      AND CURR_IN=TRUE
+      AND MARKETPLACE_MONETIZING_IN=TRUE
+    ORDER BY 1
+  ),
+  
+ctr_1 AS (
+  SELECT DISTINCT dv.pageview_dt as dw_eff_dt
+    , REPLACE(dv.pageview_url_path, '/best/credit-cards','best/credit-cards') AS URL_PATH_TX 
+    , FA.IMPRESSION_SECTION AS SECTION_NM
+    , FA.DEVICE_TYPE AS DEVICE_TYPE_NM
+    , FA.SKU_ID AS MARKETPLACE_OFFER_ID
+    , (FA.IMPRESSION_POSITION + 1) PRODUCT_RANK
+    , COUNT(DISTINCT FA.SKU_IMPRESSION_ID) AS IMPRESSION_CT
+    , COUNT(DISTINCT FA2.SHOPPING_FINISH_ID) AS MCLICK_CT
+  FROM NEXUS.PROD.F_PAGEVIEW as dv
+  JOIN NEXUS.PROD.F_SKU_IMPRESSION FA
+    ON FA.IMPRESSION_PAGEVIEW_ID = DV.PAGEVIEW_ID
+        AND FA.SKU_IMPRESSION_DT BETWEEN $start_date and $end_date
+  LEFT JOIN NEXUS.PROD.F_SHOPPING_FINISH FA2 
+    ON FA.SKU_IMPRESSION_ID=FA2.SKU_IMPRESSION_ID
+        AND FA2.SKU_PRODUCT_TYPE ILIKE '%credit_cards%'
+        AND FA2.VERTICAL_NAME ILIKE '%Credit Cards%'
+  WHERE URL_PATH_TX in ('best/credit-cards/airline','best/credit-cards/rewards')
+    AND DV.PAGEVIEW_DT BETWEEN $start_date and $end_date
+    AND FA.MONETIZABLE = 'yes_assumed'
+    AND FA.VERTICAL_NAME ILIKE '%Credit Cards%'
+    AND FA.SKU_PRODUCT_TYPE ILIKE '%credit_cards%'
+    AND FA.DEVICE_TYPE IN ('desktop','mobile')
+   GROUP BY 1,2,3,4,5,6
+   HAVING IMPRESSION_CT >10
+  ),
+
+  dealing_with_significant_offer_changes as (
+select * 
+, case when marketplace_offer_id = '2335a130-28eb-4df3-9129-4194f1aeec2f' and dw_eff_dt < '2023-11-14' then 0 -- the date the significant change to the BankAmericard offer was made
+else 1
+end as valid_data
+from ctr_1
+where valid_data = 1
+),
+
+product_agnostic_CTRs AS (
+select url_path_Tx
+    , section_nm
+    , device_type_nm
+    -- , marketplace_offer_id
+    , product_rank
+    , sum(impression_ct) as impressions
+    , sum(mclick_ct) as mclicks
+from dealing_with_significant_offer_changes
+where valid_data = 1
+group by 1,2,3,4
+)
+
+SELECT URL_PATH_TX
+    , DEVICE_TYPE_NM
+    , SECTION_nm
+    , PRODUCT_RANK 
+    , SUM(IMPRESSIONS) AS PRODUCT_AGNOSTIC_IMPRESSIONS
+    , SUM(MCLICKS) AS PRODUCT_AGNOSTIC_MCLICKS
+    -- , COUNT(DISTINCT MARKETPLACE_OFFER_ID) AS DISTINCT_PRODUCTS_CONTRIBUTING_TO_CTR
+    , DIV0(PRODUCT_AGNOSTIC_MCLICKS, PRODUCT_AGNOSTIC_IMPRESSIONS) AS PRODUCT_AGNOSTIC_CTR
+FROM ( 
+    SELECT * FROM product_agnostic_CTRs  
+    -- UNION
+    -- SELECT * FROM CARDS_MART_WORKSPACE.PBANSAL.CC_PULKIT_SEQUENCING_HISTORICAL_AGNOSTIC_CTR
+     -- where url_path_tx not in ('best/credit-cards/zero-percent','best/credit-cards/no-annual-fee','best/credit-cards/bad-credit','best/credit-cards/no-credit', 'best/credit-cards/no-foreign-transaction-fee')
+)
+WHERE PRODUCT_RANK IS NOT NULL
+GROUP BY 1,2,3,4
+order by 1,2,3,4
+
+--PRODUCT AGNOSTIC IMPRESSIONS AND MCLICKS
+-- Declaring time period variables
+SET (start_date, end_date)= (CURRENT_DATE()-30, CURRENT_DATE()-1 ); --30 days
+
+
+
+WITH CC_PRODUCTS AS (
+    SELECT DISTINCT PRODUCT_NM 
+      , OFFER_ID 
+      , MARKETPLACE_ID 
+      , PRODUCT_ID 
+      , INSTITUTION_NM
+    FROM NEXUS.PROD.D_MARKETPLACE 
+    WHERE PRODUCT_TYPE_NM = 'credit_cards'
+      AND ACTIVE_IN=TRUE 
+      AND CURR_IN=TRUE
+      AND MARKETPLACE_MONETIZING_IN=TRUE
+    ORDER BY 1
+  ),
+  
+ctr_1 AS (
+  SELECT DISTINCT dv.pageview_dt as dw_eff_dt
+    , REPLACE(dv.pageview_url_path, '/best/credit-cards','best/credit-cards') AS URL_PATH_TX 
+    , FA.IMPRESSION_SECTION AS SECTION_NM
+    , FA.DEVICE_TYPE AS DEVICE_TYPE_NM
+    , FA.SKU_ID AS MARKETPLACE_OFFER_ID
+    , (FA.IMPRESSION_POSITION + 1) PRODUCT_RANK
+    , COUNT(DISTINCT FA.SKU_IMPRESSION_ID) AS IMPRESSION_CT
+    , COUNT(DISTINCT FA2.SHOPPING_FINISH_ID) AS MCLICK_CT
+  FROM NEXUS.PROD.F_PAGEVIEW as dv
+  JOIN NEXUS.PROD.F_SKU_IMPRESSION FA
+    ON FA.IMPRESSION_PAGEVIEW_ID = DV.PAGEVIEW_ID
+        AND FA.SKU_IMPRESSION_DT BETWEEN $start_date and $end_date
+  LEFT JOIN NEXUS.PROD.F_SHOPPING_FINISH FA2 
+    ON FA.SKU_IMPRESSION_ID=FA2.SKU_IMPRESSION_ID
+        AND FA2.SKU_PRODUCT_TYPE ILIKE '%credit_cards%'
+        AND FA2.VERTICAL_NAME ILIKE '%Credit Cards%'
+  WHERE URL_PATH_TX  ILIKE '%best/credit-cards/%'
+    AND DV.PAGEVIEW_DT BETWEEN $start_date and $end_date
+    AND FA.MONETIZABLE = 'yes_assumed'
+    AND FA.VERTICAL_NAME ILIKE '%Credit Cards%'
+    AND FA.SKU_PRODUCT_TYPE ILIKE '%credit_cards%'
+    AND FA.DEVICE_TYPE IN ('desktop','mobile')
+   GROUP BY 1,2,3,4,5,6
+   HAVING IMPRESSION_CT >10
+  ),
+
+product_agnostic_impressions AS (
+select url_path_Tx
+    , section_nm
+    , device_type_nm
+    , product_rank
+    , SUM(IMPRESSION_CT) AS PRODUCT_AGNOSTIC_IMPRESSIONS
+    , SUM(MCLICK_CT) AS PRODUCT_AGNOSTIC_MCLICKS
+    , COUNT(DISTINCT MARKETPLACE_OFFER_ID) AS DISTINCT_PRODUCTS_CONTRIBUTING_TO_CTR
+from ctr_1
+group by 1,2,3,4
+)
+
+
+SELECT *
+FROM product_agnostic_impressions  
+
+--PRODUCT SPECIFIC CTR
+-- Declaring time period variables
+SET (start_date, end_date)= (current_date()-180, current_date() );
+-- SET (product_nm)= ('Capital One Quicksilver Credit Card' );
+-- SET (MARKETPLACE_OFFER_ID) = ('eb6605ae-a8c6-480d-9a3b-d79da54b2d7e');
+
+
+WITH CC_PRODUCTS AS (
+    SELECT DISTINCT PRODUCT_NM 
+      , OFFER_ID 
+      , MARKETPLACE_ID 
+      , PRODUCT_ID 
+      , INSTITUTION_NM
+    FROM NEXUS.PROD.D_MARKETPLACE 
+    WHERE PRODUCT_TYPE_NM = 'credit_cards'
+      AND ACTIVE_IN=TRUE 
+      AND CURR_IN=TRUE
+      AND MARKETPLACE_MONETIZING_IN=TRUE
+    ORDER BY 1
+  ),
+  
+ctr_1 AS (
+  SELECT DISTINCT dv.pageview_dt as dw_eff_dt
+    , REPLACE(dv.pageview_url_path, '/best/credit-cards','best/credit-cards') AS URL_PATH_TX 
+    , FA.IMPRESSION_SECTION AS SECTION_NM
+    , FA.DEVICE_TYPE AS DEVICE_TYPE_NM
+    , FA.SKU_ID AS MARKETPLACE_OFFER_ID
+    , (FA.IMPRESSION_POSITION + 1) PRODUCT_RANK
+    , COUNT(DISTINCT FA.SKU_IMPRESSION_ID) AS IMPRESSION_CT
+    , COUNT(DISTINCT FA2.SHOPPING_FINISH_ID) AS MCLICK_CT
+  FROM NEXUS.PROD.F_PAGEVIEW as dv
+  JOIN NEXUS.PROD.F_SKU_IMPRESSION FA
+    ON FA.IMPRESSION_PAGEVIEW_ID = DV.PAGEVIEW_ID
+        AND FA.SKU_IMPRESSION_DT BETWEEN $start_date and $end_date
+  LEFT JOIN NEXUS.PROD.F_SHOPPING_FINISH FA2 
+    ON FA.SKU_IMPRESSION_ID=FA2.SKU_IMPRESSION_ID
+        AND FA2.SKU_PRODUCT_TYPE ILIKE '%credit_cards%'
+        AND FA2.VERTICAL_NAME ILIKE '%Credit Cards%'
+  WHERE URL_PATH_TX  in ('best/credit-cards/airline','best/credit-cards/rewards')
+    AND DV.PAGEVIEW_DT BETWEEN $start_date and $end_date
+    AND FA.MONETIZABLE = 'yes_assumed'
+    AND FA.VERTICAL_NAME ILIKE '%Credit Cards%'
+    AND FA.SKU_PRODUCT_TYPE ILIKE '%credit_cards%'
+    AND FA.DEVICE_TYPE IN ('desktop','mobile')
+   GROUP BY 1,2,3,4,5,6
+   HAVING IMPRESSION_CT >10
+  ),
+
+  dealing_with_significant_offer_changes as (
+select * 
+, case when marketplace_offer_id = '2335a130-28eb-4df3-9129-4194f1aeec2f' and dw_eff_dt < '2023-11-14' then 0 -- the date the significant change to the BankAmericard offer was made
+else 1
+end as valid_data
+from ctr_1
+where valid_data = 1
+),
+
+CTR_2 AS (
+select url_path_Tx
+    , section_nm
+    , device_type_nm
+    , marketplace_offer_id
+    , product_rank
+    , sum(impression_ct) as impression_cts
+    , sum(mclick_ct) as mclick_cts
+    , DIV0(mclick_cts, impression_cts) as product_specific_ctr
+from dealing_with_significant_offer_changes
+where valid_data = 1
+group by 1,2,3,4,5
+),
+
+recent_ctr as (
+SELECT CTR_2.*,
+  MKT.PRODUCT_ID,
+  MKT.PRODUCT_NAME AS PRODUCT_NM
+FROM CTR_2  
+LEFT JOIN NEXUS.PROD.D_SKU mkt
+ON CTR_2.MARKETPLACE_OFFER_ID=MKT.OFFER_ID 
+  AND MKT.CURR_IN=TRUE
+)
+
+select URL_PATH_TX
+    ,  SECTION_NM
+    , DEVICE_TYPE_NM
+    , MARKETPLACE_OFFER_ID
+    , PRODUCT_ID 
+    , PRODUCT_NM
+    , PRODUCT_RANK
+    , SUM(IMPRESSION_CTS) AS IMPRESSIONS
+    , SUM(MCLICK_CTS) AS MCLICKS
+    , DIV0(mclicks, impressions) as product_specific_ctr
+from (
+    select * from recent_ctr
+    -- union
+    -- select * from cards_mart_workspace.pbansal.cc_pulkit_sequencing_historical_product_ctr
+     -- where url_path_tx not in ('best/credit-cards/zero-percent','best/credit-cards/no-annual-fee','best/credit-cards/bad-credit','best/credit-cards/no-credit', 'best/credit-cards/no-foreign-transaction-fee')
+) as combined_data
+-- WHERE PRODUCT_RANK IS NOT NULL
+WHERE SECTION_NM IN ('roundup_summary_table','roundup_recommendations')
+    AND PRODUCT_RANK IS NOT NULL
+GROUP BY 1,2,3,4,5,6,7
+
+
+--SERP_RANK
+with serp_rank_last_week as (
+SELECT DISTINCT DW_EFF_DT
+      , PAGE_PATH_TX as URL_PATH_TX
+      , DEVICE_TYPE as DEVICE_TYPE_NM
+      ,SUM(SERP_IMPRESSION_CT) as impressions 
+      , SUM(SERP_CLICK_CT) as clicks 
+      , SUM(SERP_RANK * SERP_IMPRESSION_CT) / SUM(SERP_IMPRESSION_CT) as weighted_avg_rank 
+      , row_number() over (PARTITION BY PAGE_PATH_TX, DEVICE_TYPE ORDER by DW_EFF_DT DESC) as rn
+FROM SEO_MART.PROD.ORGANIC_GROWTH_DRILLDOWN 
+WHERE DW_EFF_DT >= current_date() - 7
+ AND PAGE_PATH_TX in ('best/credit-cards/airline','best/credit-cards/rewards')
+ AND SERP_IMPRESSION_CT >0
+group by 1,2,3
+)
+
+select * 
+from serp_rank_last_week
+where rn=1
+
+--PYTHON
+# Python Notebook - Copy of Geo SSML - Rewards and Airline
+
+"""
+# New Notebook
+"""
+
+import matplotlib.pyplot as plt
+# import plotly.express as px
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor
+import xgboost
+# from sklearn.model_selection import RepeatedKFold, cross_val_score
+import seaborn as sns 
+import notebooksalamode as mode  # Required library in Python
+from scipy.optimize import curve_fit
+from sklearn.preprocessing import MinMaxScaler
+datasets
+
+#uSE DIFFERENT PERformance metrics: Accuracy metric
+
+agnostic_ctr=datasets['PRODUCT AGNOSTIC CTR']
+# agnostic_ctr = agnostic_ctr[agnostic_ctr['SECTION']=='roundup_summary_table']
+##CURVE FITTING - PRODUCT AGNOSTIC CTR
+devices = agnostic_ctr['DEVICE_TYPE_NM'].unique()
+pages = agnostic_ctr['URL_PATH_TX'].unique()
+sections = agnostic_ctr['SECTION_NM'].unique()
+curve_fit_array = []
+# define the true objective function
+def objective(x, a, b, c, d):
+	return (a * x) + (b * x**2) + (c * x**3) + d
+
+def curve_fitting(obj_func, x,y):
+    # curve fit
+    popt, _ = curve_fit(objective, x, y)
+    # summarize the parameter values
+    a, b, c, d = popt
+    # print('y = %.5f * x + %.5f * x^2 + %.5f * x^3 + %.5f' % (a, b, c, d))
+    
+    #Checking for outliers
+    fitted_df = pd.DataFrame()
+    fitted_df['x']=x
+    fitted_df['y']=y
+    fitted_df['y_pred']= objective(fitted_df['x'],a,b,c,d)
+    fitted_df['error'] = fitted_df['y']-fitted_df['y_pred']
+    MAPE = np.mean(np.abs(fitted_df['error'])/fitted_df['y'])*100
+    STD = np.std(fitted_df['error'])
+    MEAN_ERROR = np.mean(np.abs(fitted_df['error']))
+    # print(f'MAPE = {MAPE}; MEAN ERROR: {MEAN_ERROR}; STD = {STD}')
+    fitted_df['outlier'] = fitted_df['error'].apply(lambda x: 1 if (MEAN_ERROR + (2*STD)) < np.abs(x) else 0)
+    
+    #Curve fitting after dropping outliers from round 1 -- This is the best fitted CTR curve
+    x_2=fitted_df[fitted_df['outlier']==0]['x']
+    y_2=fitted_df[fitted_df['outlier']==0]['y']
+    # curve fit
+    popt, _ = curve_fit(objective, x_2, y_2)
+    # summarize the parameter values
+    a_2, b_2, c_2, d_2 = popt
+    # print('y = %.5f * x + %.5f * x^2 + %.5f * x^3 + %.5f' % (a_2, b_2, c_2, d_2))
+    
+    fitted_df['y_2_pred']= objective(fitted_df['x'],a_2, b_2, c_2, d_2)
+    
+    fitted_df['error_2'] = fitted_df[fitted_df['outlier']==0]['y']-fitted_df[fitted_df['outlier']==0]['y_2_pred']
+    MAPE_2 = np.mean(np.abs(fitted_df['error_2'])/fitted_df['y'])*100
+    # print(f'MAPE 2: {MAPE_2}')
+    
+    # display(fitted_df)
+    # plt.figure()
+    # plt.scatter(x, y)
+    # define a sequence of inputs between the smallest and largest known inputs
+    x_line = np.arange(min(x), max(x)+1, 1)
+    # print(x_line)
+    # calculate the output for the range
+    y_line = objective(x_line, a, b, c, d)
+    y_2_line=objective(x_line, a_2, b_2, c_2, d_2)
+    # create a line plot for the mapping function
+    # plt.plot(x_line, y_line, '--', color='red')
+    # plt.plot(x_line, y_2_line, '--', color='blue')
+    # plt.show()
+    
+    
+    return a_2, b_2, c_2, d_2, fitted_df
+
+for device in devices:
+  # print(device)
+  for page in pages:
+    # print(page)
+    for section in sections:
+      # print(page)
+      df = agnostic_ctr[(agnostic_ctr['DEVICE_TYPE_NM']==device) & (agnostic_ctr['URL_PATH_TX']==page) & (agnostic_ctr['SECTION_NM']==section)].dropna()
+      # print(df.shape)
+      if df.shape[0] > 3:
+          x = df['PRODUCT_RANK']
+          y = df['PRODUCT_AGNOSTIC_CTR']
+          a,b,c,d,fitted_df = curve_fitting(objective,x,y)
+          curve_fit_array.append(
+                 {
+                     'URL_PATH_TX': page,
+                     'DEVICE_TYPE_NM': device,
+                     'SECTION_NM':section,
+                     'parameters':  [a,b,c,d]
+                 }
+              )
+
+curve_fit_df= pd.DataFrame(curve_fit_array)    
+print(f"agnostic curve fitting parameters for every url, device, section combo. curve_fit_df's shape:: {curve_fit_df.shape}")
+
+#CALCULATED THE PRODUCT NORMALIZED CTR
+specific_ctr=datasets['PRODUCT SPECIFIC CTR']
+# specific_ctr = specific_ctr[specific_ctr['SECTION_NM']=='roundup_summary_table']
+
+#merging the curve fit parameters by product rank, device and page url
+specific_ctr = pd.merge(specific_ctr,curve_fit_df, how='left', on=['URL_PATH_TX', 'DEVICE_TYPE_NM','SECTION_NM'])
+specific_ctr = specific_ctr[specific_ctr['parameters'].isnull()==False]
+
+#Applying the parameters on each product rank to get the agnostic ctr
+specific_ctr['fitted_agnostic_ctr']= specific_ctr.apply(lambda x: objective(x.PRODUCT_RANK, x.parameters[0],x.parameters[1],x.parameters[2],x.parameters[3]), axis=1)
+#Calculate the avg. difference
+specific_ctr['difference'] = specific_ctr['PRODUCT_SPECIFIC_CTR']-specific_ctr['fitted_agnostic_ctr']
+specific_ctr['perc_difference'] = specific_ctr['difference']/specific_ctr['fitted_agnostic_ctr']
+product_ctr_difference = specific_ctr[['URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','difference','perc_difference']].groupby(by=['URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']).mean().reset_index()
+print(f'''Each product's performance vs the agnostic curve. 
+This helps know how much to scale the agnostic performance to obtain CTR predictions for positions the product has never been in. product_ctr_difference's shape:: {product_ctr_difference.shape}''')
+
+#merging the curve fit parameters by product rank, device, section and page url
+main_ctr = pd.merge(agnostic_ctr,curve_fit_df, how='left', on=['URL_PATH_TX', 'DEVICE_TYPE_NM','SECTION_NM'])
+main_ctr = main_ctr[main_ctr['parameters'].isnull()==False]
+
+main_ctr['fitted_agnostic_ctr']= main_ctr.apply(lambda x: objective(x.PRODUCT_RANK, x.parameters[0],x.parameters[1],x.parameters[2],x.parameters[3]), axis=1)
+main_ctr = pd.merge(main_ctr,product_ctr_difference, how='left', on=['URL_PATH_TX', 'DEVICE_TYPE_NM','SECTION_NM'])
+#CHECK: Does the below normalization still make sense
+main_ctr['normalized_ctr'] = main_ctr.apply(lambda x: x.fitted_agnostic_ctr + x.difference if x.difference > 0 else x.fitted_agnostic_ctr * (1+x.perc_difference) , axis=1)
+# display(main_ctr.sort_values(by=['URL_PATH_TX', 'DEVICE_TYPE_NM','MARKETPLACE_OFFER_ID','PRODUCT_RANK']))
+main_ctr = pd.merge(main_ctr, specific_ctr[['URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','PRODUCT_RANK','PRODUCT_SPECIFIC_CTR']], how='left', on = ['URL_PATH_TX', 'DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','PRODUCT_RANK'])
+# main_ctr['check']=pd.isnull(main_ctr.PRODUCT_SPECIFIC_CTR)
+main_ctr['ctr_output'] = main_ctr.PRODUCT_SPECIFIC_CTR.combine_first(main_ctr.normalized_ctr)
+print(f'''The dataset with the predicted CTR for every unique page, device, section, rank and product: {main_ctr[main_ctr['URL_PATH_TX']=='best/credit-cards/airline'].shape}''')
+
+main_ctr.loc[(main_ctr['PRODUCT_ID'] == '4a9a177e-81c5-409c-81e5-a44b0d7c3308'), 'ctr_output'] = main_ctr.loc[main_ctr['PRODUCT_ID'] == '4a9a177e-81c5-409c-81e5-a44b0d7c3308', 'ctr_output']*1.13 #Remove this once the CSP LTO ends
+display(main_ctr.head())
+
+"""
+# CCONV MODEL
+"""
+
+###cconv prediction
+
+# cconv_df = datasets['cConv']
+cconv_df = datasets['cconv_2']
+cconv_df['CLICK_DATE'] = pd.to_datetime(cconv_df['CLICK_DATE'])
+cconv_df = cconv_df.groupby(by=['CLICK_DATE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']).agg({'MCLICKS':'sum', 'TXNS':'sum','WEIGHTED_AVG_RANK':'mean'}).reset_index()
+cconv_df['CCONV'] = cconv_df['TXNS'] /cconv_df['MCLICKS'] 
+cconv_df=cconv_df.dropna()
+# display(cconv_df.head())
+# cconv_df = cconv_df[cconv_df['DEVICE_TYPE_NM']=='desktop']
+cconv_df = cconv_df[cconv_df['URL_PATH_TX'].isin(['best/credit-cards/airline','best/credit-cards/rewards'])]
+earliest_date = pd.to_datetime('today').normalize() - pd.DateOffset(months=22)
+cconv_df['CLICK_DATE'] = pd.to_datetime(cconv_df['CLICK_DATE'])
+cconv_df = cconv_df[cconv_df['CLICK_DATE']>=earliest_date]
+
+#Random Forest Regressor
+devices = cconv_df['DEVICE_TYPE_NM'].unique()
+pages = cconv_df['URL_PATH_TX'].unique()
+sections = cconv_df['SECTION_NM'].unique()
+products = cconv_df['PRODUCT_ID'].unique()
+rf_array = []
+# i=0
+# print("x")
+for device in devices:
+  for page in pages:
+    for section in sections:
+      for product in products:
+        df = cconv_df[(cconv_df['DEVICE_TYPE_NM']==device) 
+                        & (cconv_df['URL_PATH_TX']==page)  
+                        & (cconv_df['SECTION_NM']==section)
+                        & (cconv_df['CCONV'] <= 1)
+                        # & (cconv_df['CCONV'] > 0)
+                        & (cconv_df['PRODUCT_ID'] == product)]
+        df = df.reset_index()
+        # print(df.shape[0])
+        # display(df)
+        #Upsampling recent data:
+        # Find the most recent date in the DataFrame
+        df['CLICK_DATE'] = pd.to_datetime(df['CLICK_DATE'])
+        max_date = pd.to_datetime(df['CLICK_DATE'].max())
+        
+        # Calculate the date 2 months before the most recent date
+        two_months_ago = max_date - pd.DateOffset(months=1)
+        
+        # Filter the DataFrame to get the most recent 2 months of data
+        recent_data = df[df['CLICK_DATE'] > two_months_ago].copy()
+        if df.shape[0] <= 100:
+          upsampled_recent_data = recent_data #atleast 45% of the data is the last 30 days
+        elif (df.shape[0] > 100) & (df.shape[0] <= 200):
+          upsampled_recent_data = pd.concat([recent_data, recent_data], ignore_index=True) #atleast 35% of the data is the last 30 days
+        elif (df.shape[0] > 200) & (df.shape[0] <= 400):
+          upsampled_recent_data = pd.concat([recent_data, recent_data, recent_data, recent_data], ignore_index=True) #atleast 29% of the data is the last 30 days
+        elif (df.shape[0] > 400):
+          upsampled_recent_data = pd.concat([recent_data, recent_data, recent_data, recent_data, recent_data, recent_data], ignore_index=True) #atleast 25% of the data is the last 30 days
+        
+        df = pd.concat([df, upsampled_recent_data], ignore_index=True)
+        # print(df.shape)
+        
+        if df.size > 100:
+          for run_count in range(0,1):
+              # print((df[df['CCONV'] == 0]).shape)
+              # print((df[df['CCONV'] >= 0]).shape)
+              #Split the dataset into train and test sets
+            X_train, X_test, y_train, y_test = train_test_split(df[['MCLICKS','WEIGHTED_AVG_RANK']] ,
+                                                                df['CCONV'],  
+                                                                test_size=0.2, 
+                                                                random_state=48, 
+                                                                shuffle= False
+                                                                )
+                                                                
+            # print(i)
+            # i = i+1
+            # Initialize the MinMaxScaler
+            scaler = MinMaxScaler()
+            
+            # Fit on training set only
+            scaler = scaler.fit(X_train)
+            
+            # Transform both training and test sets
+            X_train_scaled = scaler.transform(X_train)
+            X_test_scaled = scaler.transform(X_test)                                                                
+            
+            rf = RandomForestRegressor()
+            # Train the model on training data
+            rf = rf.fit(X_train_scaled, y_train)
+            predictions = rf.predict(X_test_scaled)
+            # print(efit)
+            
+            #Calculating model performance
+            MAE = np.mean(np.abs((y_test - predictions)))
+            # print(f'{section} {product} MAE: {MAE*100}%')
+            # efit = np.polyfit(df['MCLICKS'], np.log(df['CCONV']), 1, w=np.sqrt(df['CCONV']))
+            # print(efit)
+            
+            min_cconv = df.nsmallest(5, 'CCONV')['CCONV'].mean()
+            max_cconv = df.nlargest(5, 'CCONV')['CCONV'].min()
+            # max_cconv_recency_weight = df.nlargest(1, 'CCONV_RECENCY_WEIGHT')['CCONV_RECENCY_WEIGHT'].max()
+            max_cconv_recency_weight=1
+            # print(max_cconv_recency_weight)
+            rf_array.append(
+                  {
+                      'URL_PATH_TX': page,
+                      'DEVICE_TYPE_NM': device,
+                      'SECTION_NM': section,
+                      'PRODUCT_ID': product,
+                      'rf_model':  rf,
+                      'min_cconv': min_cconv,
+                      'max_cconv': max_cconv,
+                      'latest_cconv_day_count':max_cconv_recency_weight,
+                      'scaler':scaler,
+                      'run_count':run_count
+                  }
+                )
+
+        
+        # if product == '4eda035c-c308-11eb-b472-4b8d0c4498ee':    
+        #   scaled_prediction_input_data = scaler.transform(df[['MCLICKS']])
+        #   # print(scaled_prediction_input_data)
+        #   # scaled_prediction_input_data[:, 1] = 1
+        #   plt.figure()
+        #   plt.scatter(df['MCLICKS'],df['CCONV'], c=df['CCONV_RECENCY_WEIGHT'])
+        #   plt.xlim(right=100)
+        #   plt.scatter(df['MCLICKS'], rf.predict(scaled_prediction_input_data), color='red' )
+        #   # plt.colorbar(plt.scatter(df['MCLICKS'], rf.predict(scaled_prediction_input_data), c=df['CCONV_RECENCY_WEIGHT'] ), label='Intensity')
+        #   plt.colorbar(plt.scatter(df['MCLICKS'],df['CCONV'], c=df['CCONV_RECENCY_WEIGHT'], cmap='plasma'), label='Intensity')
+          
+rf_df= pd.DataFrame(rf_array)    
+print(f'''The dataframe that contains the random forest models for the national dataset. 
+This is essential because it'll output the predicted cConv for every product. 
+Later we will apply the geo weights to this dataframe's outputted cConvs. rf_df's shape: {rf_df.shape} ''')
+display(rf_df.head())
+
+
+### Getting the geo mapping in
+geo_cconv_data = datasets['cconv_2']
+geo_cconv_data = geo_cconv_data[geo_cconv_data['URL_PATH_TX'].isin(['best/credit-cards/airline','best/credit-cards/rewards'])]
+geo_mapping = datasets['geo mapping'].astype('string')
+def top_geos(product_df):
+  # Get cities with enough data
+  geo_city = product_df[['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','TXNS','MCLICKS']].groupby(by=['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']).sum().reset_index().sort_values(by='TXNS', ascending=False)
+  geo_city[['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']]=geo_city[['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']].astype('string')
+  geo_city['CLICK_CONVERSION']= geo_city['TXNS']/geo_city['MCLICKS']
+  geo_city = geo_city[geo_city['TXNS']>=50].reset_index(drop=True)
+  # geo_city = geo_city[['GEO_CITY_NAME','MCLICKS','TXNS','CLICK_CONVERSION']]
+  
+  # Get marketing regions with enough data
+  marketing_region = product_df[['MARKETING_REGION_NAME','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','TXNS','MCLICKS']].groupby(by=['MARKETING_REGION_NAME','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']).sum().reset_index().sort_values(by='TXNS', ascending=False)
+  marketing_region[['MARKETING_REGION_NAME','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']]=marketing_region[['MARKETING_REGION_NAME','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']].astype('string')
+  marketing_region['CLICK_CONVERSION']= marketing_region['TXNS']/marketing_region['MCLICKS']
+  marketing_region = marketing_region[marketing_region['TXNS']>=50].reset_index(drop=True)
+  # marketing_region = marketing_region[['MARKETING_REGION_NAME','MCLICKS','TXNS','CLICK_CONVERSION']]
+  
+  # Get states with enough data
+  geo_state = product_df[['GEO_REGION_NAME','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','TXNS','MCLICKS']].groupby(by=['GEO_REGION_NAME','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']).sum().reset_index().sort_values(by='TXNS', ascending=False)
+  geo_state[['GEO_REGION_NAME','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']]=geo_state[['GEO_REGION_NAME','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']].astype('string')
+  geo_state['CLICK_CONVERSION']= geo_state['TXNS']/geo_state['MCLICKS']
+  geo_state = geo_state[geo_state['TXNS']>=50].reset_index(drop=True)
+  # geo_state = geo_state[['GEO_REGION_NAME','MCLICKS','TXNS','CLICK_CONVERSION']]
+  
+  return geo_city, marketing_region, geo_state
+  
+  
+
+# venture = data[data['PRODUCT_NM']=='Capital One Venture Rewards Credit Card']
+# geo_city_list, marketing_region_list, geo_state_list = top_geos(venture)
+# display(geo_city_list)
+
+devices = cconv_df['DEVICE_TYPE_NM'].unique()
+pages = cconv_df['URL_PATH_TX'].unique()
+sections = cconv_df['SECTION_NM'].unique()
+products = cconv_df['PRODUCT_ID'].unique()
+rf_array = []
+
+geo_city_master_list = pd.DataFrame()
+marketing_region_master_list = pd.DataFrame()
+geo_state_master_list = pd.DataFrame()
+national_list=pd.DataFrame()
+
+for device in devices:
+  for page in pages:
+    for section in sections:
+      for product in products:
+        geo_df = geo_cconv_data[(geo_cconv_data['DEVICE_TYPE_NM']==device) 
+                        & (geo_cconv_data['URL_PATH_TX']==page)  
+                        & (geo_cconv_data['SECTION_NM']==section)
+                        & (geo_cconv_data['PRODUCT_ID'] == product)]
+        national_conv = geo_df.groupby(by=['URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']).agg({'MCLICKS':'sum', 'TXNS':'sum','WEIGHTED_AVG_RANK':'mean'}).reset_index()
+        national_conv['NATIONAL_CLICK_CONVERSION']=national_conv['TXNS']/national_conv['MCLICKS']
+        national_list=pd.concat([national_list,national_conv],ignore_index=True)
+        geo_df = geo_df.reset_index(drop=True)
+        geo_city_list, marketing_region_list, geo_state_list = top_geos(geo_df)
+              
+        geo_city_master_list = pd.concat([geo_city_master_list, geo_city_list], ignore_index=True)
+        marketing_region_master_list = pd.concat([marketing_region_master_list, marketing_region_list], ignore_index=True)
+        geo_state_master_list = pd.concat([geo_state_master_list, geo_state_list], ignore_index=True)
+
+display(geo_city_master_list)
+display(marketing_region_master_list)
+display(geo_state_master_list)
+display(national_list.head())
+
+
+geo_city_master_list= geo_city_master_list[['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','CLICK_CONVERSION']]
+marketing_region_master_list= pd.merge(marketing_region_master_list, geo_mapping[['MARKETING_REGION_NAME','GEO_CITY_CODE']], on ='MARKETING_REGION_NAME', how='left')
+
+geo_state_master_list= pd.merge(geo_state_master_list, geo_mapping[['GEO_REGION_NAME','GEO_CITY_CODE']], on ='GEO_REGION_NAME', how='left')
+display(marketing_region_master_list[marketing_region_master_list.URL_PATH_TX == 'best/credit-cards/rewards'])
+# print(f'geo_city_master_list: {geo_city_master_list.shape}')
+# print(f'marketing region: {marketing_region_master_list.shape}')
+# print(f'state: {geo_state_master_list.shape}')
+
+#dropping zip codes that are already in the more granular group
+marketing_region_master_list = marketing_region_master_list[~marketing_region_master_list['GEO_CITY_CODE'].isin(geo_city_master_list['GEO_CITY_CODE'])][['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','CLICK_CONVERSION']]
+# print(f'marketing region: {marketing_region_master_list.shape}')
+
+geo_state_master_list = geo_state_master_list[~geo_state_master_list['GEO_CITY_CODE'].isin(geo_city_master_list['GEO_CITY_CODE'])]
+# print(f'state: {geo_state_master_list.shape}')
+geo_state_master_list = geo_state_master_list[~geo_state_master_list['GEO_CITY_CODE'].isin(marketing_region_master_list['GEO_CITY_CODE'])][['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','CLICK_CONVERSION']]
+# print(f'state: {geo_state_master_list.shape}')
+# display(marketing_region_master_list)
+display(geo_state_master_list[geo_state_master_list.URL_PATH_TX == 'best/credit-cards/rewards'])
+
+city_list = pd.concat([geo_city_master_list, marketing_region_master_list,geo_state_master_list], ignore_index=True)
+city_list=pd.merge(city_list,national_list,on=['URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID'],how='left')
+city_list['CCONV_WEIGHT_GEO']=city_list['CLICK_CONVERSION']/city_list['NATIONAL_CLICK_CONVERSION']
+
+#Filter to get the top 500 cities by 
+relevant_cities = geo_cconv_data[['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','MCLICKS']].groupby(by=['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM']).sum().sort_values(by='MCLICKS', ascending=False).reset_index()
+relevant_cities = relevant_cities.groupby('URL_PATH_TX').head(500)
+
+display(city_list[city_list.URL_PATH_TX == 'best/credit-cards/rewards'])
+display(relevant_cities[relevant_cities.URL_PATH_TX == 'best/credit-cards/rewards'])
+city_list.merge(relevant_cities[['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM']], how = 'inner', on = ['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM'])
+
+city_list = city_list[['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','CCONV_WEIGHT_GEO']]
+# city_list = city_list[city_list['GEO_CITY_CODE'].isin(relevant_cities['GEO_CITY_CODE'])].drop_duplicates().reset_index(drop=True)
+city_list = city_list.merge(relevant_cities[['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM']], how = 'inner', on = ['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM']).drop_duplicates().reset_index(drop=True)
+print(city_list[city_list.URL_PATH_TX=='best/credit-cards/airline'].shape)
+print(city_list[city_list.URL_PATH_TX=='best/credit-cards/rewards'].shape)
+
+# display(city_list[city_list['GEO_CITY_CODE'].contains('Buffalo')])
+unique_products = national_list[['URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']].drop_duplicates()
+
+unique_cities = pd.DataFrame(city_list['GEO_CITY_CODE'].unique(),columns=['GEO_CITY_CODE'])
+print(unique_products[unique_products.URL_PATH_TX == 'best/credit-cards/airline'].shape)
+# print(unique_cities[unique_cities.URL_PATH_TX == 'best/credit-cards/airline'].shape)
+# unique_cities=unique_cities.append({'GEO_CITY_CODE':'default'},ignore_index=True)
+default = pd.DataFrame({'GEO_CITY_CODE':['default']})
+unique_cities = pd.concat([unique_cities,default], ignore_index=True)
+# display(unique_cities[unique_cities.URL_PATH_TX == 'best/credit-cards/airline'])
+
+
+
+#We want the default list to be populated by all cities not included in the city list
+default_list = geo_cconv_data[~geo_cconv_data['GEO_CITY_CODE'].isin(unique_cities['GEO_CITY_CODE'])]
+
+default_list[['GEO_CITY_CODE']] = 'default'
+default_list= default_list[['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','MCLICKS','TXNS']].groupby(by=['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID']).sum().reset_index()
+default_list['CLICK_CONVERSION'] = default_list['TXNS']/default_list['MCLICKS']
+default_list=pd.merge(default_list,national_list,on=['URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID'],how='left')
+default_list['CCONV_WEIGHT_GEO']=default_list['CLICK_CONVERSION']/default_list['NATIONAL_CLICK_CONVERSION']
+default_list = default_list[['GEO_CITY_CODE','URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','CCONV_WEIGHT_GEO']]
+display(default_list)
+print(city_list[city_list.URL_PATH_TX=='best/credit-cards/rewards'].shape)
+print(default_list[default_list.URL_PATH_TX=='best/credit-cards/rewards'].shape)
+# city_list = city_list.append(default_list)
+city_list = pd.concat([city_list,default_list], ignore_index=True)
+print(city_list[city_list.URL_PATH_TX=='best/credit-cards/rewards'].shape)
+
+#Getting the ctr dataset ready
+ctr_output_df = main_ctr[['URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','PRODUCT_RANK','ctr_output']]
+serp_rank = datasets['SERP_RANK'] #	
+cpas = datasets['CPAs']
+# cpas.loc[cpas['PRODUCT_NM'] == 'Chase Sapphire Preferred® Card', 'EXPECTED_CPA'] = 680
+# cpas.loc[cpas['PRODUCT_NM'] == 'Blue Cash Everyday® Card from American Express', 'EXPECTED_CPA'] = 400
+
+# ctr_output_df = ctr_output_df[ctr_output_df['MARKETPLACE_OFFER_ID']==target_product]
+impressions_df = datasets['PRODUCT AGNOSTIC IMPRESSIONS AND CLICKS']
+predictive_df = pd.merge(ctr_output_df,impressions_df, how='left', on = ['URL_PATH_TX', 'DEVICE_TYPE_NM','SECTION_NM', 'PRODUCT_RANK'])
+predictive_df['predicted_daily_mclicks'] = ((predictive_df['PRODUCT_AGNOSTIC_IMPRESSIONS']/30)*predictive_df['ctr_output']).round(2)
+print(ctr_output_df[ctr_output_df.URL_PATH_TX=='best/credit-cards/airline'].shape)
+
+# we want to join the rf df to the ctr df so we have the page, device, product and section level rf parameters along with the expected mclicks. 
+# We can then multiply the 2 to get expected txns
+predictive_df=predictive_df.dropna()
+predictive_df = pd.merge(predictive_df, rf_df, on=['URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID'], how='left')
+predictive_df = pd.merge(predictive_df, serp_rank, how='left', on=['URL_PATH_TX','DEVICE_TYPE_NM'])
+predictive_df=predictive_df.dropna()
+print(predictive_df[predictive_df.URL_PATH_TX=='best/credit-cards/airline'].shape)
+
+#Scale the predicted mclicks and serp rank before inputting them into the cconv predictive model
+for index,row in predictive_df.iterrows():
+  scaled_value = row['scaler'].transform([row[['predicted_daily_mclicks','WEIGHTED_AVG_RANK']]]) #,'latest_cconv_day_count'
+  predictive_df.at[index, 'scaled_mclicks'] = scaled_value[0][0]
+  predictive_df.at[index, 'scaled_rank'] = scaled_value[0][1]
+
+
+predictive_df['predicted_cconv'] =  predictive_df[['rf_model','scaled_mclicks','scaled_rank']].apply(lambda x: x['rf_model'].predict([x[['scaled_mclicks','scaled_rank']]] )[0], axis=1) #,'scaled_recency_weight'
+predictive_df['predicted_cconv'] =  predictive_df[['predicted_cconv','max_cconv']].apply(lambda x: x['max_cconv'] if x['predicted_cconv'] > x['max_cconv'] else x['predicted_cconv'], axis=1)
+
+predictive_df = pd.merge(predictive_df, cpas, how='left', on=['PRODUCT_ID'])
+
+# geo_predictive_df = pd.merge(predictive_df,unique_cities,how='cross')
+pages = predictive_df.URL_PATH_TX.unique()
+geo_predictive_df = pd.DataFrame()
+for page in pages:
+  temp_cities = city_list[city_list.URL_PATH_TX==page]
+  display(temp_cities['GEO_CITY_CODE'].nunique())
+  filtered_cities = unique_cities[unique_cities['GEO_CITY_CODE'].isin(temp_cities['GEO_CITY_CODE'])]
+  default_row = pd.DataFrame({'GEO_CITY_CODE':'default'}, index=[1])
+  filtered_cities = pd.concat([filtered_cities,default_row])
+  temp_predictive_df = predictive_df[predictive_df.URL_PATH_TX==page]
+  temp_geo_predictive_df = pd.merge(temp_predictive_df,filtered_cities,how='cross')
+  geo_predictive_df = pd.concat([geo_predictive_df,temp_geo_predictive_df], ignore_index=True)
+
+geo_predictive_df = pd.merge(geo_predictive_df,city_list, how='left', on= ['URL_PATH_TX','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_ID','GEO_CITY_CODE'])
+geo_predictive_df['geo_predicted_cconv'] =  geo_predictive_df[['predicted_cconv','CCONV_WEIGHT_GEO']].apply(lambda x: x['predicted_cconv'] if pd.isna(x['CCONV_WEIGHT_GEO']) else x['CCONV_WEIGHT_GEO']*x['predicted_cconv'], axis=1)
+# display(predictive_df)
+# display(geo_predictive_df)
+# display(geo_predictive_df[geo_predictive_df['CCONV_WEIGHT_GEO'].isna()==False])
+
+predictive_df['predicted_daily_txns']=predictive_df['predicted_cconv']*predictive_df['predicted_daily_mclicks']
+predictive_df['predicted_30d_txns']=(predictive_df['predicted_daily_txns']*30).round(0)
+predictive_df['predicted_tpi']=(predictive_df['predicted_30d_txns']/(predictive_df['PRODUCT_AGNOSTIC_IMPRESSIONS']))
+predictive_df['predicted_arpi']=predictive_df['predicted_tpi']*predictive_df['EXPECTED_CPA']
+
+geo_predictive_df['predicted_daily_txns']=geo_predictive_df['geo_predicted_cconv']*geo_predictive_df['predicted_daily_mclicks']
+geo_predictive_df['predicted_30d_txns']=(geo_predictive_df['predicted_daily_txns']*30).round(0)
+geo_predictive_df['predicted_tpi']=(geo_predictive_df['predicted_30d_txns']/(geo_predictive_df['PRODUCT_AGNOSTIC_IMPRESSIONS']))
+geo_predictive_df['predicted_arpi']=geo_predictive_df['predicted_tpi']*geo_predictive_df['EXPECTED_CPA']
+
+# predictive_df[(predictive_df['URL_PATH_TX']=='best/credit-cards/rewards')&(predictive_df['SECTION_NM']=='roundup_summary_table')].sort_values(by=['DEVICE_TYPE_NM','PRODUCT_ID','PRODUCT_RANK']).head(30)
+display(geo_predictive_df[(geo_predictive_df.URL_PATH_TX == 'best/credit-cards/rewards')])
+
+from scipy.optimize import linear_sum_assignment
+
+def sequence_recommender(piv_table, page, device, section):
+  profit_matrix = piv_table.values.tolist()
+  for i in range(0,len(profit_matrix)):
+      profit_matrix[i]=pd.to_numeric(piv_table.values.tolist()[i])
+  
+  max_value = np.max(profit_matrix)
+  #Using the cost matrix to find which positions are the answer
+  cost_matrix = max_value - profit_matrix
+  row_ind, col_ind = linear_sum_assignment(cost_matrix)
+  # print(col_ind)
+  # display(piv_table)
+  
+  ranks = col_ind
+  #Impact analysis
+  #     target_impressions = np.array(impressions['IMPRESSIONS'])
+  #     target_cconv = np.array(cConv['CCONV']).astype(float)
+  #     print(f'target impressions: {target_impressions}')
+  #     print(f'target cConv: {target_cconv}')
+  
+  a=piv_table
+  a.index = a.index.astype(float)
+  # display(piv_table)
+  #     output = {}
+  ordinals = []
+  products_in_order=[]
+  #Using the avg CCONV
+  for i in range(0,len(ranks)):
+      # print(f'{a.columns[ranks[i]]} at {i+1}')
+      ordinals.append(i+1)
+      products_in_order.append(a.columns[ranks[i]])
+  #         output[position]=a.columns[ranks[i]]
+  
+  
+  recommended_sequence = []
+  recommended_sequence_details = []
+  for index, row in piv_table.iterrows():
+    try:
+      #drop any already sequenced products from being considered in the next sequence
+      if len(recommended_sequence) > 0:
+        for element in recommended_sequence:
+          row.pop(element)
+      # display(row)
+      #Find the product with the highest ARPI in the row
+      selected_product = row.idxmax()
+      #Add the product to our recommended sequence list
+      recommended_sequence.append(selected_product)
+      recommended_sequence_details.append(
+                   {
+                      'URL_PATH_TX': page,
+                      'DEVICE_TYPE_NM': device,
+                      'SECTION_NM': section,
+                      'PRODUCT_NM': selected_product,
+                      'PRODUCT_RANK':index,
+                      'ARPI':max(row)
+                   }
+                )
+    except:
+      break
+  
+  # print(recommended_sequence)
+  sequence = pd.DataFrame(recommended_sequence_details)
+  
+  return sequence
+
+"""
+# EXPERIMENTING WITH A CCONV HEAVY SEQUENCING ALGO
+
+"""
+
+cconvalgo_test_df = geo_predictive_df[["URL_PATH_TX","DEVICE_TYPE_NM","SECTION_NM","PRODUCT_RANK","PRODUCT_NM","PRODUCT_ID","GEO_CITY_CODE","ctr_output","geo_predicted_cconv","EXPECTED_CPA"]]
+#Calculating
+display(cconvalgo_test_df)
+max_metrics = cconvalgo_test_df.groupby(by=["URL_PATH_TX","DEVICE_TYPE_NM","SECTION_NM","PRODUCT_RANK","GEO_CITY_CODE"]).max().reset_index()
+max_metrics=max_metrics.rename(columns={"ctr_output": "MAX_CTR", "geo_predicted_cconv": "MAX_PREDICTED_CCONV","EXPECTED_CPA":"MAX_CPA"})
+max_metrics = max_metrics.drop(columns = ["PRODUCT_NM","PRODUCT_ID"])
+display(max_metrics)
+display(max_metrics[max_metrics.URL_PATH_TX=='best/credit-cards/airline']['PRODUCT_RANK'].nunique())
+
+#Normalizing the 3 core metrics for sequencing
+geo_normalized_df = pd.merge(cconvalgo_test_df,max_metrics, how='left', on=['URL_PATH_TX', 'DEVICE_TYPE_NM','SECTION_NM','PRODUCT_RANK','GEO_CITY_CODE'])
+geo_normalized_df["CTR_NORM"] = (geo_normalized_df["ctr_output"]/geo_normalized_df["MAX_CTR"]).round(2)
+geo_normalized_df["CCONV_NORM"] = (geo_normalized_df["geo_predicted_cconv"]/geo_normalized_df["MAX_PREDICTED_CCONV"]).round(2)
+geo_normalized_df["CPA_NORM"] = (geo_normalized_df["EXPECTED_CPA"]/geo_normalized_df["MAX_CPA"]).round(2)
+geo_normalized_df["SCORE"] = (1*geo_normalized_df["CTR_NORM"]) + (3*geo_normalized_df["CCONV_NORM"]) + (2*geo_normalized_df["CPA_NORM"])
+# normalized_df[normalized_df["SECTION_NM"]=="roundup_summary_table"].head(16)
+
+geo_normalized_df.loc[geo_normalized_df['PRODUCT_ID'] == '4a9a177e-81c5-409c-81e5-a44b0d7c3308', 'SCORE'] =geo_normalized_df.loc[geo_normalized_df['PRODUCT_ID'] == '4a9a177e-81c5-409c-81e5-a44b0d7c3308', 'SCORE']*2.5 #CSP LTO
+
+
+display(geo_normalized_df)
+test_cconv_sequencing = geo_normalized_df #[predictive_df['SECTION_NM']=='roundup_summary_table']
+test_cconv_sequencing = test_cconv_sequencing[test_cconv_sequencing['URL_PATH_TX'].isin(['best/credit-cards/airline','best/credit-cards/rewards'])]
+devices = test_cconv_sequencing['DEVICE_TYPE_NM'].unique()
+pages = test_cconv_sequencing['URL_PATH_TX'].unique()
+sections = test_cconv_sequencing['SECTION_NM'].unique()
+products = test_cconv_sequencing['PRODUCT_NM'].unique()
+# cities = test_cconv_sequencing['GEO_CITY_CODE'].unique()
+
+# products = products.sort()
+geo_sequence_df = pd.DataFrame()
+
+for page in pages:
+  for section in sections:
+    for device in devices:
+      df1 = test_cconv_sequencing[(test_cconv_sequencing['DEVICE_TYPE_NM']==device) 
+                      & (test_cconv_sequencing['URL_PATH_TX']==page)  
+                      & (test_cconv_sequencing['SECTION_NM']==section)
+                      ]
+      cities = df1['GEO_CITY_CODE'].unique()
+
+      for city in cities:
+        # print(f'city: {city} device: {device}; url: {page}; section: {section}')
+        df = df1[(df1['GEO_CITY_CODE']==city) ]
+        # print(f'device: {device}; url: {page}; section: {section}')
+        piv_table = pd.pivot_table(df, values='SCORE', index=['PRODUCT_RANK'],
+                    columns=['PRODUCT_NM'], aggfunc=np.mean)
+        
+        sequence = sequence_recommender(piv_table, page,device, section)
+        sequence['GEO_CITY_CODE']=city
+        # geo_sequence_df=geo_sequence_df.append(sequence)
+        geo_sequence_df = pd.concat([geo_sequence_df, sequence], ignore_index=True)
+        
+        # if (section == 'roundup_summary_table') & (device == 'desktop'):
+          # print(f'city: {city} device: {device}; url: {page}; section: {section}')
+          # display(sequence)
+          # display(pd.pivot_table(df, values='SCORE', index=['PRODUCT_RANK'],
+                    # columns=['PRODUCT_NM'], aggfunc=np.mean))
+display(geo_sequence_df)
+
+display(max_metrics[max_metrics.URL_PATH_TX=='best/credit-cards/rewards']['PRODUCT_RANK'].nunique())
+display(max_metrics[max_metrics.URL_PATH_TX=='best/credit-cards/rewards']['DEVICE_TYPE_NM'].nunique())
+display(max_metrics[max_metrics.URL_PATH_TX=='best/credit-cards/rewards']['SECTION_NM'].nunique())
+display(max_metrics[max_metrics.URL_PATH_TX=='best/credit-cards/rewards']['GEO_CITY_CODE'].nunique())
+
+display(geo_predictive_df[geo_predictive_df.URL_PATH_TX=='best/credit-cards/rewards']['PRODUCT_RANK'].nunique())
+display(geo_predictive_df[geo_predictive_df.URL_PATH_TX=='best/credit-cards/rewards']['DEVICE_TYPE_NM'].nunique())
+display(geo_predictive_df[geo_predictive_df.URL_PATH_TX=='best/credit-cards/rewards']['SECTION_NM'].nunique())
+display(geo_predictive_df[geo_predictive_df.URL_PATH_TX=='best/credit-cards/rewards']['GEO_CITY_CODE'].nunique())
+mode.export_csv(max_metrics[max_metrics.URL_PATH_TX=='best/credit-cards/rewards'])
+
+# from json import loads, dumps
+import notebooksalamode as mode
+
+# output_default_df_cconv = pd.merge(default_sequence_df,cpas, how='left', on = ['PRODUCT_NM'])
+marketplace_ids = datasets['cConv'][['MARKETPLACE_OFFER_ID','PRODUCT_ID']].drop_duplicates()
+# marketplace_ids.sort_values(by=['PRODUCT_NM']).head(20)
+# output_default_df_cconv = pd.merge(output_default_df_cconv,marketplace_ids, how='left', on = ['PRODUCT_ID'])
+# output_default_df_cconv = output_default_df_cconv[['URL_PATH_TX','GEO_CITY_CODE','DEVICE_TYPE_NM','SECTION_NM','MARKETPLACE_OFFER_ID','PRODUCT_RANK','PRODUCT_NM']]
+# output_default_df_cconv['model_name'] = 'P.U.L.K.I.T. cConv Heavy'
+# display(output_default_df_cconv.head())
+
+output_geo_df_cconv = pd.merge(geo_sequence_df,cpas, how='left', on = ['PRODUCT_NM'])
+marketplace_ids = datasets['cConv'][['MARKETPLACE_OFFER_ID','PRODUCT_ID']].drop_duplicates()
+# marketplace_ids.sort_values(by=['PRODUCT_NM']).head(20)
+output_geo_df_cconv = pd.merge(output_geo_df_cconv,marketplace_ids, how='left', on = ['PRODUCT_ID'])
+output_geo_df_cconv = output_geo_df_cconv[['URL_PATH_TX','GEO_CITY_CODE','DEVICE_TYPE_NM','SECTION_NM','MARKETPLACE_OFFER_ID','PRODUCT_RANK','PRODUCT_NM']]
+output_geo_df_cconv['model_name'] = 'P.U.L.K.I.T. cConv Heavy'
+display(output_geo_df_cconv.head())
+
+print(output_geo_df_cconv.shape)
+# output_df_cconv = output_default_df_cconv.append(output_geo_df_cconv)
+output_df_cconv = output_geo_df_cconv
+print(output_df_cconv.shape)
+geo_mapping = geo_mapping[['GEO_CITY_CODE','GEO_REGION_NAME','GEO_CITY_NAME']].drop_duplicates()
+
+output_df_cconv.dropna(inplace=True)
+output_df_cconv['GEO_CITY_CODE'] = output_df_cconv['GEO_CITY_CODE'].str.lower()
+output_df_cconv=output_df_cconv[['URL_PATH_TX','GEO_CITY_CODE','DEVICE_TYPE_NM','SECTION_NM','MARKETPLACE_OFFER_ID','PRODUCT_RANK']].sort_values(by=['URL_PATH_TX','GEO_CITY_CODE','DEVICE_TYPE_NM','SECTION_NM','PRODUCT_RANK'])
+display(output_df_cconv)
+print(output_df_cconv.shape)
+print("cconv heavy export file")
+mode.export_csv(output_df_cconv)
+
+
+
+display(output_df_cconv[(output_df_cconv.URL_PATH_TX == 'best/credit-cards/rewards')&(output_df_cconv.DEVICE_TYPE_NM =='mobile')]['MARKETPLACE_OFFER_ID'].nunique()) 
+display(output_df_cconv[(output_df_cconv.URL_PATH_TX == 'best/credit-cards/airline')&(output_df_cconv.DEVICE_TYPE_NM =='mobile')]['MARKETPLACE_OFFER_ID'].nunique())
+display(output_df_cconv[output_df_cconv.URL_PATH_TX == 'best/credit-cards/airline'])
+display(output_df_cconv[output_df_cconv.URL_PATH_TX == 'best/credit-cards/rewards'])
+
+checker = output_df_cconv[output_df_cconv.URL_PATH_TX == 'best/credit-cards/rewards']
+checker = output_df_cconv[output_df_cconv.DEVICE_TYPE_NM == 'denver']
+checker = output_df_cconv[output_df_cconv.SECTION_NM == 'roundup_recommendations']
+checker_checks = pd.DataFrame(checker[['PRODUCT_RANK','MARKETPLACE_OFFER_ID']].value_counts()).reset_index()
+checker_checks[checker_checks.PRODUCT_RANK ==1].sort_values(by='count',ascending=False)
+
+"""
+# MAIN EXPORTS ARE DOWN HERE
+
+"""
+
